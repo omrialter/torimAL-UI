@@ -84,19 +84,19 @@ export default function Menu({ children }: Props) {
                 {/* Links (right-aligned) */}
                 <View style={{ marginTop: 20 }}>
                     <Link href="/" style={styles.link} onPress={closeDrawer}>
-                        🏠 Home
+                        🏠 בית
                     </Link>
                     <Link href="/ourTeam" style={styles.link} onPress={closeDrawer}>
-                        Our team
+                        הצוות שלנו
                     </Link>
                     <Link href="/orderTor" style={styles.link} onPress={closeDrawer}>
-                        Order tor
+                        זימון תור
                     </Link>
                     <Link href="/torList" style={styles.link} onPress={closeDrawer}>
-                        your torim
+                        התורים שלך
                     </Link>
                     <Link href="/" style={styles.link} onPress={closeDrawer}>
-                        About
+                        קצת עלינו
                     </Link>
                     {isAdmin && <>
                         <Link href="/admin/bi_page" style={styles.link} onPress={closeDrawer}>
@@ -185,7 +185,9 @@ const styles = StyleSheet.create({
     },
     logoutBtn: {
         flex: 1,
-        justifyContent: "space-evenly"
+        justifyContent: "space-evenly",
+        // backgroundColor: '#fff',
+        // color: 'rgba(0,0,0,0.4)'
 
     }
 });

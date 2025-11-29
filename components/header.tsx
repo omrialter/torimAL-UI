@@ -1,18 +1,22 @@
 // components/header.tsx
-import Constants from "expo-constants";
+
+import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-const appName = Constants.expoConfig?.name;
+
 
 export default function Header({ onMenuPress }: { onMenuPress: () => void }) {
+
+    const { businessData } = useBusinessDataContext();
+
     return (
         <SafeAreaView edges={['top']} style={styles.safeArea}>
             <View style={styles.container}>
                 <View style={styles.spacer} />
-                <Text numberOfLines={1} style={[styles.title, { textTransform: "capitalize" }]}>
-                    {appName}
+                <Text style={styles.title}>
+                    {businessData?.name ?? ''}
                 </Text>
                 <TouchableOpacity
                     accessibilityRole="button"
@@ -38,7 +42,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 16,
-        backgroundColor: '#000',
+        backgroundColor: '#111',
     },
     spacer: { width: 32 },
     title: {

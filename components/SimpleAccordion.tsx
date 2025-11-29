@@ -1,0 +1,168 @@
+import React, { useEffect, useRef, useState } from "react";
+import {
+    Animated,
+    Easing,
+    LayoutChangeEvent,
+    Pressable,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
+} from "react-native";
+
+type SimpleAccordionProps = {
+    title: string;
+    children: React.ReactNode;
+    defaultExpanded?: boolean;
+
+    // ✅ style props (so your JSX compiles)
+    // optional
+};
+
+export default function SimpleAccordion({
+    title,
+    children,
+    defaultExpanded = false,
+}: SimpleAccordionProps) {
+    const [open, setOpen] = useState(defaultExpanded);
+    const [measuredHeight, setMeasuredHeight] = useState(0);
+
+    const heightAnim = useRef(new Animated.Value(0)).current;
+    const rotateAnim = useRef(new Animated.Value(defaultExpanded ? 1 : 0)).current;
+
+    useEffect(() => {
+        // wait 1 second before opening
+        const timer = setTimeout(() => setOpen(true), 1000);
+
+        return () => clearTimeout(timer);
+    }, []);
+
+    // when measured, set initial height if defaultExpanded
+    useEffect(() => {
+        if (!measuredHeight) return;
+        if (defaultExpanded) heightAnim.setValue(measuredHeight);
+    }, [measuredHeight, defaultExpanded, heightAnim]);
+
+    // animate on toggle
+    useEffect(() => {
+        if (!measuredHeight) return;
+        Animated.timing(heightAnim, {
+            toValue: open ? measuredHeight : 0,
+            duration: 250,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: false,
+        }).start();
+        Animated.timing(rotateAnim, {
+            toValue: open ? 1 : 0,
+            duration: 250,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        }).start();
+    }, [open, measuredHeight, heightAnim, rotateAnim]);
+
+    const onContentLayout = (e: LayoutChangeEvent) => {
+        const h = e.nativeEvent.layout.height;
+        if (h !== measuredHeight) setMeasuredHeight(h);
+    };
+
+    const rotate = rotateAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ["0deg", "180deg"],
+    });
+
+    // render once to measure and again for the visible area (identical content!)
+    const Content = (
+        <View style={[styles.contentInner]}>
+            {children}
+            <TouchableOpacity
+                onPress={() => setOpen(false)}
+                style={styles.closeButton}
+                activeOpacity={0.8}
+            >
+                <Text style={styles.closeButtonText}>סגור</Text>
+            </TouchableOpacity>
+        </View>
+    );
+
+    return (
+        <View style={styles.container}>
+            {/* Header */}
+            <Pressable style={styles.header} onPress={() => setOpen(o => !o)}>
+                <Animated.Text style={[styles.arrow, { transform: [{ rotate }] }]}>
+                    ▼
+                </Animated.Text>
+                <Text style={styles.title}>{title}</Text>
+            </Pressable>
+
+            {/* Static wrapper keeps the border radius visible */}
+            <View style={styles.roundedContentContainer}>
+                <Animated.View style={{ height: heightAnim, overflow: "hidden" }}>
+                    <View style={styles.contentInner} onLayout={onContentLayout}>
+                        {children}
+                        <TouchableOpacity
+                            onPress={() => setOpen(false)}
+                            style={styles.closeButton}
+                            activeOpacity={0.8}
+                        >
+                            <Text style={styles.closeButtonText}>סגור</Text>
+                        </TouchableOpacity>
+                    </View>
+                </Animated.View>
+            </View>
+        </View>
+    );
+}
+
+const styles = StyleSheet.create({
+    container: {
+        overflow: "visible",
+        width: "100%"
+
+    },
+    header: {
+        backgroundColor: "#808080",
+        paddingHorizontal: 16,
+        paddingVertical: 6,
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        borderBottomLeftRadius: 32
+    },
+    title: {
+        color: "#fafafa",
+        fontSize: 18,
+        fontWeight: "600",
+    },
+    arrow: {
+        fontSize: 24,
+        color: "#fafafa",
+        marginLeft: 8
+    },
+    // 👇 Keeps radius even when open
+    roundedContentContainer: {
+
+        borderBottomLeftRadius: 12,
+        borderBottomRightRadius: 12,
+        overflow: "hidden",
+    },
+    contentInner: {
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        alignItems: "center",
+        width: "100%",
+    },
+    closeButton: {
+        marginTop: 16,
+        backgroundColor: "#808080",
+        paddingVertical: 8,
+        paddingHorizontal: 20,
+        borderRadius: 8,
+    },
+    closeButtonText: {
+        color: "#fff",
+        fontWeight: "600",
+    },
+});
+
+
+
