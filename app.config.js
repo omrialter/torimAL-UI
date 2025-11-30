@@ -25,8 +25,10 @@ export default {
       output: "static",
       favicon: "./assets/images/favicon.png"
     },
+
     plugins: [
       "expo-router",
+
       [
         "expo-splash-screen",
         {
@@ -36,12 +38,18 @@ export default {
           backgroundColor: "#ffffff"
         }
       ],
+
       "expo-secure-store",
-      "expo-font"
+      "expo-font",
+
+      // 👇 הוספה נדרשת לפי expo-doctor
+      "expo-web-browser"
     ],
+
     experiments: {
       typedRoutes: true
     },
+
     extra: {
       FIREBASE_API_KEY: process.env.FIREBASE_API_KEY,
       FIREBASE_AUTH_DOMAIN: process.env.FIREBASE_AUTH_DOMAIN,

@@ -1,4 +1,4 @@
-// app/signup.tsx or app/(auth)/signup.tsx
+// app/(auth)/signup.tsx
 import axios from 'axios';
 import Constants from 'expo-constants';
 import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
@@ -19,9 +19,9 @@ interface AuthResponse {
     };
 }
 
-
 export default function SignUpScreen() {
     const recaptchaVerifier = useRef<FirebaseRecaptchaVerifierModal>(null);
+
     const [name, setName] = useState('');
     const [phone, setPhone] = useState('');
     const [code, setCode] = useState('');
@@ -30,18 +30,24 @@ export default function SignUpScreen() {
 
     const businessId = Constants.expoConfig?.extra?.BUSINESS_ID;
 
-    const normalizePhone = (phone: string) => {
-        return phone.startsWith("0")
-            ? phone.replace("0", "+972")
-            : phone;
+    // כמו ב־login – רק לצורך שליחת SMS
+    const normalizePhone = (raw: string) => {
+        if (!raw) return raw;
+        return raw.startsWith('0') ? raw.replace(/^0/, '+972') : raw;
     };
-
 
     const sendOTP = async () => {
         try {
+            if (!businessId) {
+                setError('Missing BUSINESS_ID in app config');
+                return;
+            }
+
+            const normalized = normalizePhone(phone);
+
             const confirmationResult = await signInWithPhoneNumber(
                 auth,
-                normalizePhone(phone),
+                normalized,
                 recaptchaVerifier.current!
             );
 
@@ -68,7 +74,8 @@ export default function SignUpScreen() {
 
             await SecureStore.setItemAsync('jwt', res.data.token);
 
-            router.replace('/login'); // redirect to login
+            // אחרי הרשמה – נחזיר למסך התחברות
+            router.replace('/login');
         } catch (err: any) {
             console.error('Signup failed:', err);
             setError(err.response?.data?.error || 'Signup failed');
@@ -84,6 +91,7 @@ export default function SignUpScreen() {
 
             <View style={styles.container}>
                 <Text style={styles.title}>Sign up page</Text>
+
                 {!confirmation ? (
                     <>
                         <TextInput
@@ -93,7 +101,7 @@ export default function SignUpScreen() {
                             style={styles.input}
                         />
                         <TextInput
-                            placeholder="Phone (+972...)"
+                            placeholder="Phone (05...)"
                             value={phone}
                             onChangeText={setPhone}
                             keyboardType="phone-pad"
@@ -113,6 +121,7 @@ export default function SignUpScreen() {
                         <Button title="Verify and Sign Up" onPress={verifyAndSignup} />
                     </>
                 )}
+
                 {error && <Text style={styles.error}>{error}</Text>}
             </View>
         </>
@@ -122,13 +131,20 @@ export default function SignUpScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        justifyContent: "center", // spacing along main axis (vertical by default)
-        alignItems: "center",
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     title: {
         fontSize: 30,
-        marginBottom: 50
+        marginBottom: 50,
     },
-    input: { borderBottomWidth: 1, marginBottom: 20, padding: 10 },
-    error: { color: 'red', marginTop: 10 },
+    input: {
+        borderBottomWidth: 1,
+        marginBottom: 20,
+        padding: 10,
+    },
+    error: {
+        color: 'red',
+        marginTop: 10,
+    },
 });
