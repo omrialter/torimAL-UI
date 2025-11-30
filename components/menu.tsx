@@ -1,32 +1,34 @@
 // components/CustomDrawer.tsx
 import { useUserDataContext } from "@/contexts/UserDataContext";
 import { Link } from "expo-router";
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
     Animated,
     Button,
     Dimensions,
+    StyleProp,
     StyleSheet,
     Text,
     TouchableOpacity,
-    View
-} from 'react-native';
-import { useAuth } from '../contexts/AuthContext';
-
+    View,
+    ViewStyle,
+} from "react-native";
+import { useAuth } from "../contexts/AuthContext";
 
 type RenderProp = (toggleDrawer: () => void) => React.ReactNode;
-type Props = { children: RenderProp };
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
+type Props = {
+    children: RenderProp;
+    style?: StyleProp<ViewStyle>;
+};
+
+const SCREEN_WIDTH = Dimensions.get("window").width;
 const DRAWER_WIDTH = Math.round(SCREEN_WIDTH * 0.7);
 
-export default function Menu({ children }: Props) {
-
+export default function Menu({ children, style }: Props) {
     const { userData } = useUserDataContext();
-
     const { logout, isAdmin } = useAuth();
 
-    // start off-screen to the RIGHT
     const translateX = useRef(new Animated.Value(DRAWER_WIDTH)).current;
     const [open, setOpen] = useState(false);
 
@@ -47,7 +49,7 @@ export default function Menu({ children }: Props) {
     }, [animateTo]);
 
     const closeDrawer = useCallback(() => {
-        animateTo(DRAWER_WIDTH); // slide out to the RIGHT
+        animateTo(DRAWER_WIDTH);
         setTimeout(() => setOpen(false), 250);
     }, [animateTo]);
 
@@ -58,17 +60,16 @@ export default function Menu({ children }: Props) {
     const content = useMemo(() => children(toggleDrawer), [children, toggleDrawer]);
 
     return (
-        <View style={{ flex: 1 }}>
-            {/* Drawer panel (anchored to the RIGHT) */}
+        <View style={[{ flex: 1 }, style]}>
+            {/* Drawer panel */}
             <Animated.View
                 style={[
                     styles.drawer,
                     { transform: [{ translateX }] },
                 ]}
             >
-                {/* Header row: title aligned right + X button on the far right */}
+                {/* Header row */}
                 <View style={styles.headerRow}>
-
                     <TouchableOpacity
                         onPress={closeDrawer}
                         accessibilityRole="button"
@@ -78,10 +79,13 @@ export default function Menu({ children }: Props) {
                     >
                         <Text style={styles.closeText}>✕</Text>
                     </TouchableOpacity>
-                    <Text style={styles.section} >ברוך הבא, {userData?.name}</Text>
+
+                    <Text style={styles.section}>
+                        ברוך הבא, {userData?.name}
+                    </Text>
                 </View>
 
-                {/* Links (right-aligned) */}
+                {/* Navigation Links */}
                 <View style={{ marginTop: 20 }}>
                     <Link href="/" style={styles.link} onPress={closeDrawer}>
                         🏠 בית
@@ -98,30 +102,35 @@ export default function Menu({ children }: Props) {
                     <Link href="/" style={styles.link} onPress={closeDrawer}>
                         קצת עלינו
                     </Link>
-                    {isAdmin && <>
-                        <Link href="/admin/bi_page" style={styles.link} onPress={closeDrawer}>
-                            BI Page
-                        </Link>
-                        <Link href="/admin/torim" style={styles.link} onPress={closeDrawer}>
-                            Admin Appointmetns
-                        </Link>
 
-                    </>}
+                    {isAdmin && (
+                        <>
+                            <Link href="/admin/bi_page" style={styles.link} onPress={closeDrawer}>
+                                BI Page
+                            </Link>
+                            <Link href="/admin/torim" style={styles.link} onPress={closeDrawer}>
+                                Admin Appointments
+                            </Link>
+                        </>
+                    )}
                 </View>
-                <View style={styles.logoutBtn} >
-                    <Button
-                        title="Log out"
-                        onPress={() => logout()}
-                    />
+
+                {/* Logout Button */}
+                <View style={styles.logoutBtn}>
+                    <Button title="Log out" onPress={() => logout()} />
                 </View>
             </Animated.View>
 
-            {/* Dim overlay */}
+            {/* Dim background when open */}
             {open && (
-                <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={closeDrawer} />
+                <TouchableOpacity
+                    style={styles.overlay}
+                    activeOpacity={1}
+                    onPress={closeDrawer}
+                />
             )}
 
-            {/* App UI (header + Slot) */}
+            {/* Page content */}
             {content}
         </View>
     );
@@ -129,33 +138,31 @@ export default function Menu({ children }: Props) {
 
 const styles = StyleSheet.create({
     drawer: {
-        position: 'absolute',
+        position: "absolute",
         top: 0,
         bottom: 0,
-        right: 0, // anchor to the RIGHT
+        right: 0,
         width: DRAWER_WIDTH,
-        backgroundColor: '#111',
+        backgroundColor: "#111",
         paddingTop: 60,
         paddingHorizontal: 20,
-        zIndex: 10,
-
-        // Right‑aligned content
-        alignItems: 'stretch',
+        zIndex: 999,
+        alignItems: "stretch",
     },
 
     headerRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
+        flexDirection: "row",
+        alignItems: "center",
         marginBottom: 12,
     },
 
     section: {
         flex: 1,
-        color: '#888',
+        color: "#888",
         fontSize: 14,
         letterSpacing: 1,
-        textTransform: 'uppercase',
-        textAlign: 'right', // title text aligned RIGHT
+        textTransform: "uppercase",
+        textAlign: "right",
     },
 
     closeBtn: {
@@ -165,29 +172,26 @@ const styles = StyleSheet.create({
     },
 
     closeText: {
-        color: '#fff',
+        color: "#fff",
         fontSize: 20,
         lineHeight: 20,
     },
 
-
     link: {
-        color: '#fff',
+        color: "#fff",
         fontSize: 18,
         marginVertical: 12,
-        textAlign: 'right', // links aligned RIGHT
+        textAlign: "right",
     },
 
     overlay: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(0,0,0,0.4)',
+        backgroundColor: "rgba(0,0,0,0.4)",
         zIndex: 5,
     },
+
     logoutBtn: {
         flex: 1,
         justifyContent: "space-evenly",
-        // backgroundColor: '#fff',
-        // color: 'rgba(0,0,0,0.4)'
-
-    }
+    },
 });

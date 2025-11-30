@@ -3,6 +3,8 @@ import { Redirect, Slot, usePathname } from 'expo-router';
 import { ActivityIndicator, View } from 'react-native';
 import { useAuth } from '../../contexts/AuthContext';
 
+
+
 export default function ProtectedLayout() {
     const { userToken, appReady } = useAuth();
     const pathname = usePathname();

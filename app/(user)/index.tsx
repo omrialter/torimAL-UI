@@ -1,12 +1,16 @@
 import SimpleAccordion from "@/components/SimpleAccordion";
 import VideoBanner from "@/components/VideoBanner";
 import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
+import { useRouter } from 'expo-router';
 import { useEffect, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import JumpingMsg from "../../components/jumpingMsg";
+import WorksGallery from "../../components/WorksGallery";
 import { useAuth } from "../../contexts/AuthContext";
 
+
 export default function Index() {
+    const router = useRouter();
     const [expanded, setExpanded] = useState(true);
     const handlePress = () => setExpanded(!expanded);
     const { businessData } = useBusinessDataContext();
@@ -16,81 +20,149 @@ export default function Index() {
         setExpanded(true);
     }, []);
 
-    const BANNER_HEIGHT = 320;
+    const handleBookAppointment = () => {
+        router.push("/(user)/orderTor");
 
+    };
+
+    const images = [
+        require("@/assets/images/nails1.png"),
+        require("@/assets/images/nails2.jpg"),
+        require("@/assets/images/nails3.jpg"),
+        require("@/assets/images/nails4.jpg"),
+        require("@/assets/images/nails5.jpg"),
+        require("@/assets/images/nails6.jpg"),
+    ];
     return (
-        <View >
-            <View style={styles.container}>
+        <View style={styles.root}>
 
-                <VideoBanner
-                    source={require("@/assets/videos/bannerVideo.mp4")}
-                    aspectRatio={16 / 9}
-                    enableCaching={false}
-                    zIndex={0} // 👈 background
-                />
-
+            {/* 1) הודעה מהעסק – צמוד ל־Header, בשכבה עליונה */}
+            <View style={styles.accordionOverlay}>
                 <SimpleAccordion title="הודעה מהעסק">
                     <JumpingMsg />
                 </SimpleAccordion>
             </View>
 
+            {/* 2+3) תוכן העמוד: באנר + כפתור מתחתיו */}
+            <View style={styles.content}>
 
-            {/* 3) Welcome line */}
-            <Text style={styles.title}>
-                {isAdmin ? "Welcome Boss!" : "Welcome to torimAL!"}
-            </Text>
+                {/* 2) הבאנר עם Welcome */}
+                {/* 2) הבאנר עם Welcome + צל עדין */}
+                <View style={styles.bannerShadow}>
+                    <View style={styles.bannerWrap}>
+                        <VideoBanner
+                            source={require("@/assets/videos/bannerVideo.mp4")}
+                            enableCaching={false}
+                            zIndex={0}
+                        />
 
+                        <View style={styles.titleContainer}>
+                            <Text style={styles.title}>
+                                {isAdmin ? "Welcome Boss!" : "Welcome to torimAL!"}
+                            </Text>
+                        </View>
+                    </View>
+                </View>
+
+
+                {/* 3) כפתור הזמנת תור */}
+                <View style={styles.buttonWrap}>
+                    <TouchableOpacity style={styles.bookBtn} onPress={handleBookAppointment}>
+                        <Text style={styles.bookBtnText}>להזמנת תור</Text>
+                    </TouchableOpacity>
+                </View>
+
+                <WorksGallery images={images} />
+
+
+            </View>
         </View>
-
     );
 }
 
+const ACCORDION_HEADER_HEIGHT = 48; // אפשר לשחק עם זה אם יש חפיפה קטנה
+
 const styles = StyleSheet.create({
-    container: {
+    root: {
+        flex: 1,
         position: "relative",
-        backgroundColor: "red",
-        width: "100%",
-        paddingBottom: 24,
-        alignItems: "stretch", // children take full width
-        gap: 16,               // nice spacing between sections
     },
 
-    section: {
-        width: "100%",
+    // האקורדיון צף מעל התוכן, אבל עדיין זז יחד עם העמוד בגלילה
+    accordionOverlay: {
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 10,
+    },
+
+    // כל שאר התוכן מתחיל קצת מתחת לאקורדיון
+    content: {
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        paddingBottom: 24,
+        gap: 16,
+        height: 500
     },
 
     bannerWrap: {
         width: "100%",
-        position: "relative",  // required for the absolute VideoBanner
+        height: 240,          // 👈 גובה מפורש לבאנר
+        position: "relative",
         overflow: "hidden",
         borderBottomLeftRadius: 18,
         borderBottomRightRadius: 18,
         backgroundColor: "#000",
     },
+    bannerShadow: {
+        width: "100%",
+        borderRadius: 18,
+        // 👇 צל עדין
+        shadowColor: "#000",
+        shadowOpacity: 0.28,   // היה 0.18 — עכשיו יותר מודגש
+        shadowRadius: 12,      // היה 8 — עכשיו רחב יותר
+        shadowOffset: { width: 0, height: 6 }, // קצת יותר עומק
+        elevation: 10,         // לאנדרואיד (היה 6)
+    },
+
+    titleContainer: {
+        position: "absolute",
+        top: 50,
+        width: "100%",
+        alignItems: "center",
+        zIndex: 2,
+    },
 
     title: {
-        textAlign: "center",
         fontWeight: "bold",
-        fontSize: 20,
+        color: "white",
+        fontSize: 24,
         marginTop: 4,
+        textAlign: "center",
     },
 
-    // (optional) examples if you need them later:
-    businessMSG: {
-        marginTop: 0,
+    buttonWrap: {
+        marginTop: 16,
         width: "100%",
-        textAlign: "center",
+        alignItems: "center",
     },
-    accordion: {
-        backgroundColor: "#808080",
-        borderTopLeftRadius: 0,
-        borderTopRightRadius: 0,
-        borderBottomLeftRadius: 10,
-        borderBottomRightRadius: 10,
-        elevation: 2,
-        shadowColor: "#000",
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        shadowOffset: { width: 0, height: 2 },
+
+    bookBtn: {
+        backgroundColor: "#2563eb",
+        paddingVertical: 12,
+        paddingHorizontal: 32,
+        borderRadius: 999,
+        alignItems: "center",
+        justifyContent: "center",
+        elevation: 4,
+    },
+
+    bookBtnText: {
+        color: "white",
+        fontSize: 18,
+        fontWeight: "600",
     },
 });

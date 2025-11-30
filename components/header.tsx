@@ -43,6 +43,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: 16,
         backgroundColor: '#111',
+
     },
     spacer: { width: 32 },
     title: {

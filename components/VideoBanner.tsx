@@ -6,36 +6,36 @@ import { LinearGradient } from "expo-linear-gradient";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
+
 type VideoBannerProps = {
     source: string | number;
     posterUri?: string;
-    aspectRatio?: number;
+    aspectRatio?: number; // unused for now but you can keep it if you want
     title?: string;
     subtitle?: string;
     ctaLabel?: string;
     onCtaPress?: () => void;
     enableCaching?: boolean;
     overlayOpacity?: number;
-    zIndex?: number; // 👈 new
+    zIndex?: number;
 };
 
 export default function VideoBanner({
     source,
     posterUri,
-    aspectRatio = 16 / 9,
+    aspectRatio = 16 / 9, // <- can keep for future, not used in layout now
     title,
     subtitle,
     ctaLabel,
     onCtaPress,
     enableCaching = true,
     overlayOpacity = 0.45,
-    zIndex = 0, // 👈 default background layer
+    zIndex = 0,
 }: VideoBannerProps) {
     const videoRef = useRef<Video>(null);
     const [cachedUri, setCachedUri] = useState<string | null>(null);
     const [isReady, setReady] = useState(false);
 
-    // Auto-play and pause depending on focus
     useFocusEffect(
         useCallback(() => {
             (async () => {
@@ -47,7 +47,6 @@ export default function VideoBanner({
         }, [])
     );
 
-    // Cache remote video
     useEffect(() => {
         let cancelled = false;
         async function cacheVideoIfNeeded() {
@@ -85,7 +84,7 @@ export default function VideoBanner({
     }, [source, cachedUri]);
 
     return (
-        <View style={[styles.wrapper, { aspectRatio, zIndex }]}>
+        <View style={[styles.wrapper, { zIndex }]}>
             <Video
                 ref={videoRef}
                 style={StyleSheet.absoluteFill}
@@ -133,10 +132,7 @@ export default function VideoBanner({
 
 const styles = StyleSheet.create({
     wrapper: {
-        position: "absolute", // 👈 makes it sit behind other components
-        top: 0,
-        left: 0,
-        right: 0,
+        flex: 1,               // 👈 fill the parent (bannerWrap)
         backgroundColor: "#000",
         overflow: "hidden",
     },
