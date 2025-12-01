@@ -1,13 +1,17 @@
 import BannerWithAbout from "@/components/BannerWithSlider";
+import ContactInfoSection from "@/components/ContactInfoSection";
+import FooterSection from "@/components/FooterSection";
 import SimpleAccordion from "@/components/SimpleAccordion";
 import VideoBanner from "@/components/VideoBanner";
 import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from "react";
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import JumpingMsg from "../../components/jumpingMsg";
 import WorksGallery from "../../components/WorksGallery";
 import { useAuth } from "../../contexts/AuthContext";
+
+
 
 export default function Index() {
     const router = useRouter();
@@ -73,6 +77,7 @@ export default function Index() {
                         <Text style={styles.bookBtnText}>להזמנת תור</Text>
                     </TouchableOpacity>
                 </View>
+                <View style={styles.hr} />
 
                 <WorksGallery images={images} />
 
@@ -84,6 +89,26 @@ export default function Index() {
                     description="כאן תוכלי לכתוב כמה מילים על העסק – ניסיון, סגנון, מה מיוחד אצלך ועוד."
                 />
             </View>
+
+            <View style={styles.hr} />
+
+            <ContactInfoSection
+                phone="054-3010576"
+                address="ספיר 15 שערי תקווה"
+                onPressCall={() => Linking.openURL("tel:0543010576")}
+                onPressNavigate={() => Linking.openURL("https://waze.com/ul?q=ספיר%2015%20שערי%20תקווה")}
+            />
+
+
+            <FooterSection
+                onPressTiktok={() => Linking.openURL("https://www.tiktok.com/")}
+                onPressFacebook={() => Linking.openURL("https://www.facebook.com/")}
+                onPressInstagram={() => Linking.openURL("https://www.instagram.com/")}
+                onPressWhatsapp={() =>
+                    Linking.openURL("https://wa.me/972527404249")
+                }
+            />
+
         </ScrollView>
     );
 
