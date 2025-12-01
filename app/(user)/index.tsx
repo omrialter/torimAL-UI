@@ -115,7 +115,6 @@ const styles = StyleSheet.create({
         overflow: "hidden",
         borderBottomLeftRadius: 18,
         borderBottomRightRadius: 18,
-        backgroundColor: "#000",
     },
     bannerShadow: {
         width: "100%",
@@ -151,7 +150,9 @@ const styles = StyleSheet.create({
     },
 
     bookBtn: {
-        backgroundColor: "#2563eb",
+        borderWidth: 1,
+        borderColor: "black",
+        backgroundColor: "white",
         paddingVertical: 12,
         paddingHorizontal: 32,
         borderRadius: 999,
@@ -160,8 +161,9 @@ const styles = StyleSheet.create({
         elevation: 4,
     },
 
+
     bookBtnText: {
-        color: "white",
+        color: "black",
         fontSize: 18,
         fontWeight: "600",
     },
