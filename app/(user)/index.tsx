@@ -1,13 +1,13 @@
+import BannerWithAbout from "@/components/BannerWithSlider";
 import SimpleAccordion from "@/components/SimpleAccordion";
 import VideoBanner from "@/components/VideoBanner";
 import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import JumpingMsg from "../../components/jumpingMsg";
 import WorksGallery from "../../components/WorksGallery";
 import { useAuth } from "../../contexts/AuthContext";
-
 
 export default function Index() {
     const router = useRouter();
@@ -22,7 +22,6 @@ export default function Index() {
 
     const handleBookAppointment = () => {
         router.push("/(user)/orderTor");
-
     };
 
     const images = [
@@ -33,21 +32,16 @@ export default function Index() {
         require("@/assets/images/nails5.jpg"),
         require("@/assets/images/nails6.jpg"),
     ];
+
     return (
-        <View style={styles.root}>
-
-            {/* 1) הודעה מהעסק – צמוד ל־Header, בשכבה עליונה */}
-            <View style={styles.accordionOverlay}>
-                <SimpleAccordion title="הודעה מהעסק">
-                    <JumpingMsg />
-                </SimpleAccordion>
-            </View>
-
-            {/* 2+3) תוכן העמוד: באנר + כפתור מתחתיו */}
-            <View style={styles.content}>
-
-                {/* 2) הבאנר עם Welcome */}
-                {/* 2) הבאנר עם Welcome + צל עדין */}
+        <ScrollView
+            style={styles.root}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+        >
+            {/* אזור ראש העמוד: באנר + הודעה מהעסק אחד על השני */}
+            <View style={styles.heroSection}>
+                {/* הבאנר ברקע */}
                 <View style={styles.bannerShadow}>
                     <View style={styles.bannerWrap}>
                         <VideoBanner
@@ -64,8 +58,16 @@ export default function Index() {
                     </View>
                 </View>
 
+                {/* האקורדיון יושב מעל הבאנר באותה נקודה */}
+                <View style={styles.accordionOverlay}>
+                    <SimpleAccordion title="הודעה מהעסק">
+                        <JumpingMsg />
+                    </SimpleAccordion>
+                </View>
+            </View>
 
-                {/* 3) כפתור הזמנת תור */}
+            {/* שאר התוכן של המסך */}
+            <View style={styles.innerContent}>
                 <View style={styles.buttonWrap}>
                     <TouchableOpacity style={styles.bookBtn} onPress={handleBookAppointment}>
                         <Text style={styles.bookBtnText}>להזמנת תור</Text>
@@ -74,21 +76,37 @@ export default function Index() {
 
                 <WorksGallery images={images} />
 
+                <View style={styles.hr} />
 
+                <BannerWithAbout
+                    mainImage={require("@/assets/images/banner2.jpg")}
+                    title="קצת על הסטודיו"
+                    description="כאן תוכלי לכתוב כמה מילים על העסק – ניסיון, סגנון, מה מיוחד אצלך ועוד."
+                />
             </View>
-        </View>
+        </ScrollView>
     );
-}
 
-const ACCORDION_HEADER_HEIGHT = 48; // אפשר לשחק עם זה אם יש חפיפה קטנה
+
+}
 
 const styles = StyleSheet.create({
     root: {
         flex: 1,
-        position: "relative",
+        backgroundColor: "#f9ebf2ff",
     },
 
-    // האקורדיון צף מעל התוכן, אבל עדיין זז יחד עם העמוד בגלילה
+    scrollContent: {
+        paddingBottom: 24,
+    },
+
+    // כל הראש – באנר + אקורדיון מעליו
+    heroSection: {
+        width: "100%",
+        position: "relative",   // חשוב בשביל ה־absolute של האקורדיון
+    },
+
+    // האקורדיון יושב מעל הבאנר בדיוק באותה נקודה
     accordionOverlay: {
         position: "absolute",
         top: 0,
@@ -97,34 +115,23 @@ const styles = StyleSheet.create({
         zIndex: 10,
     },
 
-    // כל שאר התוכן מתחיל קצת מתחת לאקורדיון
-    content: {
-        position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
-        paddingBottom: 24,
-        gap: 16,
-        height: 500
-    },
-
     bannerWrap: {
         width: "100%",
-        height: 240,          // 👈 גובה מפורש לבאנר
+        height: 240,
         position: "relative",
         overflow: "hidden",
-        borderBottomLeftRadius: 18,
-        borderBottomRightRadius: 18,
+        borderBottomLeftRadius: 40,
+        borderBottomRightRadius: 40,
     },
+
     bannerShadow: {
         width: "100%",
         borderRadius: 18,
-        // 👇 צל עדין
         shadowColor: "#000",
-        shadowOpacity: 0.28,   // היה 0.18 — עכשיו יותר מודגש
-        shadowRadius: 12,      // היה 8 — עכשיו רחב יותר
-        shadowOffset: { width: 0, height: 6 }, // קצת יותר עומק
-        elevation: 10,         // לאנדרואיד (היה 6)
+        shadowOpacity: 0.28,
+        shadowRadius: 12,
+        shadowOffset: { width: 0, height: 6 },
+        elevation: 10,
     },
 
     titleContainer: {
@@ -141,6 +148,13 @@ const styles = StyleSheet.create({
         fontSize: 24,
         marginTop: 4,
         textAlign: "center",
+    },
+
+    // כל מה שבא אחרי הראש (כפתור, גלריה, באנר שני)
+    innerContent: {
+        paddingHorizontal: 16,
+        gap: 16,
+        marginTop: 16,
     },
 
     buttonWrap: {
@@ -161,10 +175,16 @@ const styles = StyleSheet.create({
         elevation: 4,
     },
 
-
     bookBtnText: {
         color: "black",
         fontSize: 18,
         fontWeight: "600",
+    },
+
+    hr: {
+        height: 1,
+        backgroundColor: "white",
+        marginTop: 1,
+        marginBottom: 1,
     },
 });

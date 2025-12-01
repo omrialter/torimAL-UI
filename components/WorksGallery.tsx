@@ -44,15 +44,14 @@ export default function WorksGallery({
 
 const styles = StyleSheet.create({
     wrapper: {
-        marginTop: 24,
+        marginTop: 4,
+
     },
 
     title: {
-        fontSize: 22,
+        fontSize: 24,
         fontWeight: "600",
         color: "#333",
-        borderWidth: 1,
-        borderColor: "black",
         marginBottom: 12,
         textAlign: "right",
         paddingRight: 16,
@@ -73,8 +72,8 @@ const styles = StyleSheet.create({
         overflow: "hidden",
 
         // מסגרת עדינה
-        borderWidth: 1.5,
-        borderColor: "rgba(0,0,0,0.15)",
+        borderWidth: 3,
+        borderColor: "white",
         backgroundColor: "#ffffff",
 
         // ⭐ צל כמו של הבאנר ⭐

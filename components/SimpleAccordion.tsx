@@ -14,9 +14,6 @@ type SimpleAccordionProps = {
     title: string;
     children: React.ReactNode;
     defaultExpanded?: boolean;
-
-    // ✅ style props (so your JSX compiles)
-    // optional
 };
 
 export default function SimpleAccordion({
@@ -30,28 +27,31 @@ export default function SimpleAccordion({
     const heightAnim = useRef(new Animated.Value(0)).current;
     const rotateAnim = useRef(new Animated.Value(defaultExpanded ? 1 : 0)).current;
 
+    // פתיחה אוטומטית אחרי שנייה
     useEffect(() => {
-        // wait 1 second before opening
         const timer = setTimeout(() => setOpen(true), 1000);
-
         return () => clearTimeout(timer);
     }, []);
 
-    // when measured, set initial height if defaultExpanded
+    // אחרי שנמדד גובה התוכן – אם צריך, נעדכן את הערך ההתחלתי
     useEffect(() => {
         if (!measuredHeight) return;
-        if (defaultExpanded) heightAnim.setValue(measuredHeight);
+        if (defaultExpanded) {
+            heightAnim.setValue(measuredHeight);
+        }
     }, [measuredHeight, defaultExpanded, heightAnim]);
 
-    // animate on toggle
+    // אנימציה בפתיחה/סגירה
     useEffect(() => {
         if (!measuredHeight) return;
+
         Animated.timing(heightAnim, {
             toValue: open ? measuredHeight : 0,
             duration: 250,
             easing: Easing.out(Easing.cubic),
             useNativeDriver: false,
         }).start();
+
         Animated.timing(rotateAnim, {
             toValue: open ? 1 : 0,
             duration: 250,
@@ -70,9 +70,9 @@ export default function SimpleAccordion({
         outputRange: ["0deg", "180deg"],
     });
 
-    // render once to measure and again for the visible area (identical content!)
+    // התוכן (משמש גם למדידה וגם להצגה)
     const Content = (
-        <View style={[styles.contentInner]}>
+        <View style={styles.contentInner}>
             {children}
             <TouchableOpacity
                 onPress={() => setOpen(false)}
@@ -94,19 +94,16 @@ export default function SimpleAccordion({
                 <Text style={styles.title}>{title}</Text>
             </Pressable>
 
-            {/* Static wrapper keeps the border radius visible */}
+            {/* תוכן עם רדיוסים */}
             <View style={styles.roundedContentContainer}>
+                {/* 👇 View נסתר למדידת גובה מלא */}
+                <View style={styles.hiddenMeasure} onLayout={onContentLayout}>
+                    {Content}
+                </View>
+
+                {/* 👇 מה שנראה בפועל – עם גובה מונפש */}
                 <Animated.View style={{ height: heightAnim, overflow: "hidden" }}>
-                    <View style={styles.contentInner} onLayout={onContentLayout}>
-                        {children}
-                        <TouchableOpacity
-                            onPress={() => setOpen(false)}
-                            style={styles.closeButton}
-                            activeOpacity={0.8}
-                        >
-                            <Text style={styles.closeButtonText}>סגור</Text>
-                        </TouchableOpacity>
-                    </View>
+                    {Content}
                 </Animated.View>
             </View>
         </View>
@@ -117,9 +114,7 @@ const styles = StyleSheet.create({
     container: {
         overflow: "visible",
         width: "100%",
-        zIndex: 50
-
-
+        zIndex: 50,
     },
     header: {
         backgroundColor: "#808080",
@@ -128,7 +123,7 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         justifyContent: "space-between",
         alignItems: "center",
-        borderBottomLeftRadius: 32
+        borderBottomLeftRadius: 32,
     },
     title: {
         color: "#fafafa",
@@ -138,15 +133,24 @@ const styles = StyleSheet.create({
     arrow: {
         fontSize: 24,
         color: "#fafafa",
-        marginLeft: 8
+        marginLeft: 8,
     },
-    // 👇 Keeps radius even when open
     roundedContentContainer: {
-
         borderBottomLeftRadius: 12,
         borderBottomRightRadius: 12,
         overflow: "hidden",
     },
+
+    // רק למדידה – לא נראה על המסך
+    hiddenMeasure: {
+        position: "absolute",
+        opacity: 0,
+        zIndex: -1,
+        left: 0,
+        right: 0,
+        pointerEvents: "none",
+    },
+
     contentInner: {
         paddingVertical: 14,
         paddingHorizontal: 16,
@@ -165,6 +169,3 @@ const styles = StyleSheet.create({
         fontWeight: "600",
     },
 });
-
-
-
