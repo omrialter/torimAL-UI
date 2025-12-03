@@ -54,7 +54,7 @@ const styles = StyleSheet.create({
         marginBottom: 32,
         alignItems: "center",
         paddingHorizontal: 16,
-        paddingVertical: 16
+        paddingVertical: 40
     },
     title: {
         fontSize: 18,

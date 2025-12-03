@@ -58,7 +58,7 @@ export default function BannerWithAbout({
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        marginTop: 20,
+        marginTop: 8,
         borderRadius: 15,
         overflow: "hidden",
         backgroundColor: "white",

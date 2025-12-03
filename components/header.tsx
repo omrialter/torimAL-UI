@@ -36,7 +36,7 @@ export default function Header({ onMenuPress }: { onMenuPress: () => void }) {
 const HEADER_HEIGHT = 56;
 
 const styles = StyleSheet.create({
-    safeArea: { backgroundColor: '#000' },
+    safeArea: { backgroundColor: '#111' },
     container: {
         height: HEADER_HEIGHT,
         flexDirection: 'row',

@@ -104,14 +104,14 @@ export default function Menu({ children, style }: Props) {
                     </Link>
 
                     {isAdmin && (
-                        <>
+                        <View style={styles.adminBox}>
                             <Link href="/admin/bi_page" style={styles.link} onPress={closeDrawer}>
                                 BI Page
                             </Link>
                             <Link href="/admin/torim" style={styles.link} onPress={closeDrawer}>
                                 Admin Appointments
                             </Link>
-                        </>
+                        </View>
                     )}
                 </View>
 
@@ -182,6 +182,13 @@ const styles = StyleSheet.create({
         fontSize: 18,
         marginVertical: 12,
         textAlign: "right",
+    },
+    adminBox: {
+        borderColor: "white",
+        borderWidth: 1,
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        marginTop: 24
     },
 
     overlay: {

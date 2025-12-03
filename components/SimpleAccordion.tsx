@@ -117,7 +117,7 @@ const styles = StyleSheet.create({
         zIndex: 50,
     },
     header: {
-        backgroundColor: "#808080",
+        backgroundColor: "#211f1fff",
         paddingHorizontal: 16,
         paddingVertical: 1,
         flexDirection: "row",
@@ -126,13 +126,13 @@ const styles = StyleSheet.create({
         borderBottomLeftRadius: 32,
     },
     title: {
-        color: "#fafafa",
+        color: "#808080",
         fontSize: 18,
         fontWeight: "600",
     },
     arrow: {
         fontSize: 24,
-        color: "#fafafa",
+        color: "#808080",
         marginLeft: 8,
     },
     roundedContentContainer: {
@@ -159,13 +159,13 @@ const styles = StyleSheet.create({
     },
     closeButton: {
         marginTop: 16,
-        backgroundColor: "#808080",
+        backgroundColor: "#211f1fff",
         paddingVertical: 8,
         paddingHorizontal: 20,
         borderRadius: 8,
     },
     closeButtonText: {
-        color: "#fff",
+        color: "#808080",
         fontWeight: "600",
     },
 });

@@ -26,7 +26,7 @@ const styles = StyleSheet.create({
         paddingVertical: 6,
         alignItems: "center",
         gap: 6,
-        backgroundColor: "#808080", // או אפור אם תרצה
+        backgroundColor: "#211f1fff", // או אפור אם תרצה
         justifyContent: "center",
         borderRadius: 16,
     },
@@ -34,6 +34,6 @@ const styles = StyleSheet.create({
     message: {
         fontSize: 20,
         textAlign: "center",
-        color: "#fafafa",
+        color: "#808080",
     },
 });

@@ -1,4 +1,4 @@
-import BannerWithAbout from "@/components/BannerWithSlider";
+import BannerWithAbout from "@/components/BannerWithAbout";
 import ContactInfoSection from "@/components/ContactInfoSection";
 import FooterSection from "@/components/FooterSection";
 import SimpleAccordion from "@/components/SimpleAccordion";
@@ -84,6 +84,7 @@ export default function Index() {
                 <View style={styles.hr} />
 
                 <BannerWithAbout
+
                     mainImage={require("@/assets/images/banner2.jpg")}
                     title="קצת על הסטודיו"
                     description="כאן תוכלי לכתוב כמה מילים על העסק – ניסיון, סגנון, מה מיוחד אצלך ועוד."
@@ -91,6 +92,9 @@ export default function Index() {
             </View>
 
             <View style={styles.hr} />
+
+
+
 
             <ContactInfoSection
                 phone="054-3010576"
@@ -180,6 +184,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         gap: 16,
         marginTop: 16,
+        marginBottom: 16,
     },
 
     buttonWrap: {
