@@ -1,7 +1,5 @@
 // app/bookAppointment/BookAppointmentScreen.tsx
 
-import { useAuth } from "@/contexts/AuthContext";
-import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
 import React, { useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
@@ -14,11 +12,15 @@ import {
     View,
 } from "react-native";
 import { CalendarList } from "react-native-calendars";
+
+import { useAuth } from "@/contexts/AuthContext";
+import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
+import { useRouter } from "expo-router";
 import { URL, apiFetch } from "../../services/api";
 
-const API_URL = URL + "/appointments";
+// ---------- Constants & Types ----------
 
-// ---------- Types ----------
+const API_URL = `${URL}/appointments`;
 
 type AppointmentStatus = "confirmed" | "canceled" | "completed" | "no_show";
 
@@ -51,7 +53,7 @@ interface Appointment {
     service: AppointmentService;
     start: string; // ISO
     status: AppointmentStatus;
-    notes?: string | null;
+    notes: string | null;
     createdAt: string;
 }
 
@@ -78,12 +80,87 @@ interface StepRowProps {
     onPress: () => void;
 }
 
+// ---- טיפוסים מינימליים ל-businessData אחרי populate ----
+
+interface BusinessUserRef {
+    _id: string;
+    name?: string;
+    fullName?: string;
+    phone?: string;
+    avatarUrl?: string;
+}
+
+interface BusinessForBooking {
+    _id: string;
+    name: string;
+    owner: BusinessUserRef; // תמיד אובייקט אחרי populate
+    workers?: BusinessUserRef[]; // מערך אובייקטים אחרי populate
+    services?: {
+        name: string;
+        duration: number;
+        price: number;
+    }[];
+}
+
 // סטטוסים חוסמים כמו בצד שרת
 const BLOCKING_STATUSES: AppointmentStatus[] = ["confirmed"];
+
+const WORK_START_HOUR = 8;
+const WORK_END_HOUR = 20;
+
+// ---------- Helpers ----------
+
+const dateToYMD = (date: Date): string => {
+    const y = date.getFullYear();
+    const m = `${date.getMonth() + 1}`.padStart(2, "0");
+    const d = `${date.getDate()}`.padStart(2, "0");
+    return `${y}-${m}-${d}`;
+};
+
+const formatTime = (date: Date): string => {
+    return date.toLocaleTimeString("he-IL", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    });
+};
+
+const formatDate = (date: Date): string => {
+    return date.toLocaleDateString("he-IL", {
+        weekday: "long",
+        day: "2-digit",
+        month: "2-digit",
+        year: "2-digit",
+    });
+};
+
+const minutesToMs = (min: number): number => min * 60 * 1000;
+
+// מייצר אינטרוול [start, end) לכל תור, כמו בשרת
+const getApptInterval = (appt: Appointment): ApptInterval => {
+    const start = new Date(appt.start);
+    const end = new Date(start.getTime() + minutesToMs(appt.service.duration));
+    return { start, end, status: appt.status };
+};
+
+const intervalsOverlap = (
+    startA: Date,
+    endA: Date,
+    startB: Date,
+    endB: Date
+): boolean => {
+    return startA < endB && endA > startB;
+};
+
+// ---------- Component ----------
 
 const BookAppointmentScreen: React.FC = () => {
     const { user, userToken } = useAuth();
     const { businessData } = useBusinessDataContext();
+    const router = useRouter(); // 👈 שימוש ב־router
+
+    // הטלת טיפוס על businessData בהתאם למה שהשרת מחזיר אחרי populate
+    const business = businessData as BusinessForBooking | null;
 
     const clientId = user?._id ?? null;
 
@@ -94,15 +171,16 @@ const BookAppointmentScreen: React.FC = () => {
     const [selectedService, setSelectedService] = useState<Service | null>(null);
     const [selectedDate, setSelectedDate] = useState<Date | null>(null);
     const [selectedTime, setSelectedTime] = useState<Date | null>(null);
-    const [notes, setNotes] = useState<string>("");
+    const [notes, setNotes] = useState<string>(""); // כרגע לא בשימוש ב־UI, אבל נשלח לשרת
 
     // מודלים
-    const [showStaffModal, setShowStaffModal] = useState<boolean>(false);
-    const [showServiceModal, setShowServiceModal] = useState<boolean>(false);
-    const [showDateModal, setShowDateModal] = useState<boolean>(false);
-    const [showTimeModal, setShowTimeModal] = useState<boolean>(false);
+    const [showStaffModal, setShowStaffModal] = useState(false);
+    const [showServiceModal, setShowServiceModal] = useState(false);
+    const [showDateModal, setShowDateModal] = useState(false);
+    const [showTimeModal, setShowTimeModal] = useState(false);
+    const [bookingSuccess, setBookingSuccess] = useState(false);
 
-    // דוגמא ל-services עד שתביא מהשרת / קונפיג
+    // TODO: בעתיד אפשר לקחת services מ-business.services
     const services: Service[] = useMemo(
         () => [
             { id: "cut", name: "תספורת", duration: 30, price: 70 },
@@ -112,43 +190,29 @@ const BookAppointmentScreen: React.FC = () => {
         []
     );
 
-    // ---- בניית רשימת עובדים מה-businessData.workers + fallback ----
+    // ---- בניית רשימת עובדים מה-business.workers או מה-owner ----
     const staffOptions: Staff[] = useMemo(() => {
-        const workers = (businessData as any)?.workers as any[] | undefined;
+        if (!business) return [];
 
-        // 1. אם יש workers אמיתיים – נשתמש בהם
-        if (workers && workers.length > 0) {
-            return workers.map((w: any) => {
-                if (typeof w === "string") {
-                    return {
-                        id: w,
-                        name: "איש צוות",
-                    } as Staff;
-                }
+        const rawWorkers = business.workers || [];
+        const owner = business.owner;
 
-                return {
-                    id: w._id,
-                    name: w.name || w.fullName || w.phone || "איש צוות",
-                    avatarUrl: w.avatarUrl,
-                } as Staff;
-            });
+        // 1. אם יש workers – הם כבר אובייקטים מאוכלסים (populate)
+        if (rawWorkers.length > 0) {
+            return rawWorkers.map((w) => ({
+                id: w._id,
+                name: w.name || w.fullName || w.phone || "איש צוות",
+                avatarUrl: w.avatarUrl,
+            }));
         }
 
-        // 2. אם אין workers אבל יש owner – owner הוא איש הצוות היחיד
-        if (businessData?.owner) {
-            const owner: any = (businessData as any).owner;
-            const ownerId =
-                typeof owner === "string" ? owner : owner._id;
-            const ownerName =
-                owner?.name ||
-                owner?.fullName ||
-                businessData.name ||
-                "איש צוות";
-
+        // 2. fallback: owner כאיש הצוות היחיד
+        if (owner && owner._id) {
             return [
                 {
-                    id: ownerId,
-                    name: ownerName,
+                    id: owner._id,
+                    name: owner.name || owner.fullName || business.name || "איש צוות",
+                    avatarUrl: owner.avatarUrl,
                 },
             ];
         }
@@ -158,13 +222,17 @@ const BookAppointmentScreen: React.FC = () => {
             return [
                 {
                     id: user._id,
-                    name: (user as any).fullName || (user as any).name || user.email || "איש צוות",
+                    name:
+                        (user as any).fullName ||
+                        (user as any).name ||
+                        (user as any).email ||
+                        "איש צוות",
                 },
             ];
         }
 
         return [];
-    }, [businessData, user]);
+    }, [business, user]);
 
     // אם יש רק עובד אחד – נבחר אותו אוטומטית
     useEffect(() => {
@@ -175,53 +243,8 @@ const BookAppointmentScreen: React.FC = () => {
 
     // תורים קיימים ליום הנבחר
     const [dayAppointments, setDayAppointments] = useState<Appointment[]>([]);
-    const [loadingDayAppointments, setLoadingDayAppointments] =
-        useState<boolean>(false);
-    const [submitting, setSubmitting] = useState<boolean>(false);
-
-    // ---------- עזרי תאריכים / שעות ----------
-
-    const dateToYMD = (date: Date): string => {
-        const y = date.getFullYear();
-        const m = `${date.getMonth() + 1}`.padStart(2, "0");
-        const d = `${date.getDate()}`.padStart(2, "0");
-        return `${y}-${m}-${d}`;
-    };
-
-    const formatTime = (date: Date): string => {
-        return date.toLocaleTimeString("he-IL", {
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false,
-        });
-    };
-
-    const formatDate = (date: Date): string => {
-        return date.toLocaleDateString("he-IL", {
-            weekday: "long",
-            day: "2-digit",
-            month: "2-digit",
-            year: "2-digit",
-        });
-    };
-
-    const minutesToMs = (min: number): number => min * 60 * 1000;
-
-    // מייצר אינטרוול [start, end) לכל תור, כמו בשרת
-    const getApptInterval = (appt: Appointment): ApptInterval => {
-        const start = new Date(appt.start);
-        const end = new Date(start.getTime() + minutesToMs(appt.service.duration));
-        return { start, end, status: appt.status };
-    };
-
-    const intervalsOverlap = (
-        startA: Date,
-        endA: Date,
-        startB: Date,
-        endB: Date
-    ): boolean => {
-        return startA < endB && endA > startB;
-    };
+    const [loadingDayAppointments, setLoadingDayAppointments] = useState(false);
+    const [submitting, setSubmitting] = useState(false);
 
     // ---------- הבאת תורים קיימים ליום שנבחר (לפי עובד) ----------
 
@@ -229,13 +252,12 @@ const BookAppointmentScreen: React.FC = () => {
         const fetchDayAppointments = async () => {
             if (!selectedDate || !userToken) return;
 
+            // fallback: אם לא נבחר איש צוות – ניקח את הראשון ברשימה, אם יש
             const workerId =
                 selectedStaff?.id ||
-                (staffOptions.length === 1 ? staffOptions[0].id : null);
+                (staffOptions.length > 0 ? staffOptions[0].id : null);
 
-            if (!workerId) {
-                return;
-            }
+            if (!workerId) return;
 
             setLoadingDayAppointments(true);
 
@@ -257,7 +279,7 @@ const BookAppointmentScreen: React.FC = () => {
                 const data: Appointment[] = await res.json();
                 setDayAppointments(data || []);
             } catch (err) {
-                console.error(err);
+                console.error("Error fetching day appointments:", err);
                 setDayAppointments([]);
             } finally {
                 setLoadingDayAppointments(false);
@@ -267,13 +289,10 @@ const BookAppointmentScreen: React.FC = () => {
         fetchDayAppointments();
     }, [selectedDate, userToken, selectedStaff, staffOptions]);
 
-    // ---------- יצירת שעות פנויות לפי היום שנבחר ----------
+    // ---------- יצירת שעות פנויות ----------
 
     const availableSlots: Date[] = useMemo(() => {
         if (!selectedDate || !selectedService) return [];
-
-        const WORK_START_HOUR = 8;
-        const WORK_END_HOUR = 20;
 
         const serviceDuration = selectedService.duration;
         const STEP_MINUTES = serviceDuration;
@@ -300,14 +319,9 @@ const BookAppointmentScreen: React.FC = () => {
 
             if (slotEnd > dayEnd) break;
 
-            let hasConflict = false;
-
-            for (const appt of apptIntervals) {
-                if (intervalsOverlap(slotStart, slotEnd, appt.start, appt.end)) {
-                    hasConflict = true;
-                    break;
-                }
-            }
+            const hasConflict = apptIntervals.some((appt) =>
+                intervalsOverlap(slotStart, slotEnd, appt.start, appt.end)
+            );
 
             if (!hasConflict) {
                 slots.push(slotStart);
@@ -327,7 +341,7 @@ const BookAppointmentScreen: React.FC = () => {
 
         const workerId =
             selectedStaff?.id ||
-            (staffOptions.length === 1 ? staffOptions[0].id : null);
+            (staffOptions.length > 0 ? staffOptions[0].id : null);
 
         if (!workerId) {
             Alert.alert("שגיאה", "לא נבחר איש צוות");
@@ -369,6 +383,7 @@ const BookAppointmentScreen: React.FC = () => {
                 const appt: Appointment = await res.json();
                 console.log("✅ created appointment", appt);
                 Alert.alert("הצליח!", "התור נקבע בהצלחה");
+                setBookingSuccess(true); // ✅ מסמן שההזמנה הצליחה
             } else if (res.status === 409) {
                 Alert.alert(
                     "התור נתפס",
@@ -385,7 +400,7 @@ const BookAppointmentScreen: React.FC = () => {
                     if (json?.error) {
                         serverMsg = json.error;
                     }
-                } catch (e) {
+                } catch {
                     if (txt) serverMsg = txt;
                 }
 
@@ -399,7 +414,7 @@ const BookAppointmentScreen: React.FC = () => {
         }
     };
 
-    // ---------- רנדר ----------
+    // ---------- Render ----------
 
     return (
         <View style={styles.container}>
@@ -415,13 +430,13 @@ const BookAppointmentScreen: React.FC = () => {
                     label="איש צוות"
                     value={
                         selectedStaff?.name ||
-                        (staffOptions.length === 1
+                        (staffOptions.length > 0
                             ? staffOptions[0].name
                             : "בחר איש צוות")
                     }
                     active={currentStep === 1}
                     onPress={() => {
-                        if (staffOptions.length > 1) {
+                        if (staffOptions.length > 0) {
                             setShowStaffModal(true);
                             setCurrentStep(1);
                         }
@@ -439,7 +454,7 @@ const BookAppointmentScreen: React.FC = () => {
                         setShowServiceModal(true);
                         setCurrentStep(2);
                     }}
-                    disabled={staffOptions.length > 1 && !selectedStaff}
+                    disabled={false}
                 />
 
                 {/* 3. בחירת יום */}
@@ -502,6 +517,17 @@ const BookAppointmentScreen: React.FC = () => {
                             <Text style={styles.submitButtonText}>לחץ להזמנת התור</Text>
                         )}
                     </TouchableOpacity>
+
+                    {bookingSuccess && (
+                        <TouchableOpacity
+                            style={styles.secondaryButton}
+                            onPress={() => router.push("/torList")}
+                        >
+                            <Text style={styles.secondaryButtonText}>
+                                לעמוד התורים שלך
+                            </Text>
+                        </TouchableOpacity>
+                    )}
                 </View>
             </ScrollView>
 
@@ -771,6 +797,19 @@ const styles = StyleSheet.create({
     },
     submitButtonText: {
         color: "#fff",
+        fontWeight: "600",
+    },
+    secondaryButton: {
+        marginTop: 12,
+        borderRadius: 24,
+        paddingVertical: 12,
+        alignItems: "center",
+        borderWidth: 1,
+        borderColor: "#1d4ed8",
+        backgroundColor: "#eef2ff",
+    },
+    secondaryButtonText: {
+        color: "#1d4ed8",
         fontWeight: "600",
     },
     modalBackdrop: {
