@@ -90,16 +90,19 @@ interface BusinessUserRef {
     avatarUrl?: string;
 }
 
+interface BusinessServiceFromDb {
+    _id: string;
+    name: string;
+    duration: number;
+    price: number;
+}
+
 interface BusinessForBooking {
     _id: string;
     name: string;
     owner: BusinessUserRef; // תמיד אובייקט אחרי populate
     workers?: BusinessUserRef[]; // מערך אובייקטים אחרי populate
-    services?: {
-        name: string;
-        duration: number;
-        price: number;
-    }[];
+    services?: BusinessServiceFromDb[];
 }
 
 // סטטוסים חוסמים כמו בצד שרת
@@ -157,7 +160,7 @@ const intervalsOverlap = (
 const BookAppointmentScreen: React.FC = () => {
     const { user, userToken } = useAuth();
     const { businessData } = useBusinessDataContext();
-    const router = useRouter(); // 👈 שימוש ב־router
+    const router = useRouter();
 
     // הטלת טיפוס על businessData בהתאם למה שהשרת מחזיר אחרי populate
     const business = businessData as BusinessForBooking | null;
@@ -180,15 +183,19 @@ const BookAppointmentScreen: React.FC = () => {
     const [showTimeModal, setShowTimeModal] = useState(false);
     const [bookingSuccess, setBookingSuccess] = useState(false);
 
-    // TODO: בעתיד אפשר לקחת services מ-business.services
-    const services: Service[] = useMemo(
-        () => [
-            { id: "cut", name: "תספורת", duration: 30, price: 70 },
-            { id: "cut+beard", name: "תספורת + זקן", duration: 40, price: 100 },
-            { id: "beard", name: "זקן", duration: 20, price: 50 },
-        ],
-        []
-    );
+    // ---- בניית רשימת שירותים מה-business.services ----
+    const services: Service[] = useMemo(() => {
+        if (!business?.services || business.services.length === 0) {
+            return [];
+        }
+
+        return business.services.map((srv) => ({
+            id: srv._id || srv.name,
+            name: srv.name,
+            duration: srv.duration,
+            price: srv.price,
+        }));
+    }, [business]);
 
     // ---- בניית רשימת עובדים מה-business.workers או מה-owner ----
     const staffOptions: Staff[] = useMemo(() => {
@@ -379,33 +386,60 @@ const BookAppointmentScreen: React.FC = () => {
                 body: JSON.stringify(body),
             });
 
+            // --- SUCCESS ---
             if (res.status === 201) {
                 const appt: Appointment = await res.json();
                 console.log("✅ created appointment", appt);
                 Alert.alert("הצליח!", "התור נקבע בהצלחה");
-                setBookingSuccess(true); // ✅ מסמן שההזמנה הצליחה
-            } else if (res.status === 409) {
+                setBookingSuccess(true);
+                return;
+            }
+
+            // --- SLOT TAKEN ---
+            if (res.status === 409) {
                 Alert.alert(
                     "התור נתפס",
                     "מישהו אחר תפס את השעה הזאת, נסה לבחור שעה אחרת."
                 );
-            } else {
-                const txt = await res.text();
-                console.log("❌ POST /appointments status:", res.status);
-                console.log("❌ POST /appointments body:", txt);
+                return;
+            }
 
-                let serverMsg = "לא הצלחנו לקבוע את התור, נסה שוב.";
+            // --- MAX CONFIRMED APPOINTMENTS ---
+            if (res.status === 403) {
+                const txt = await res.text();
+
+                let msg = "לא ניתן לקבוע יותר משני תורים במקביל במצב מאושר.";
+
                 try {
                     const json = JSON.parse(txt);
-                    if (json?.error) {
-                        serverMsg = json.error;
+                    if (json.error === "MAX_CONFIRMED_REACHED" && json.message) {
+                        msg = json.message;
+                    } else if (json.message) {
+                        msg = json.message;
                     }
                 } catch {
-                    if (txt) serverMsg = txt;
+                    if (txt) msg = txt;
                 }
 
-                Alert.alert("שגיאה", serverMsg);
+                Alert.alert("הגבלת מספר תורים", msg);
+                return;
             }
+
+            // --- OTHER ERRORS ---
+            const txt = await res.text();
+            console.log("❌ POST /appointments status:", res.status);
+            console.log("❌ POST /appointments body:", txt);
+
+            let serverMsg = "לא הצלחנו לקבוע את התור, נסה שוב.";
+            try {
+                const json = JSON.parse(txt);
+                if (json?.error) serverMsg = json.error;
+                if (json?.message) serverMsg = json.message;
+            } catch {
+                if (txt) serverMsg = txt;
+            }
+
+            Alert.alert("שגיאה", serverMsg);
         } catch (err) {
             console.error("❌ handleSubmit error:", err);
             Alert.alert("שגיאה", "תקלה בשרת / אינטרנט");
@@ -448,13 +482,19 @@ const BookAppointmentScreen: React.FC = () => {
                 <StepRow
                     stepNumber={2}
                     label="טיפול"
-                    value={selectedService?.name || "בחירת טיפול"}
+                    value={
+                        services.length === 0
+                            ? "אין טיפולים מוגדרים לעסק"
+                            : selectedService?.name || "בחירת טיפול"
+                    }
                     active={currentStep === 2}
                     onPress={() => {
-                        setShowServiceModal(true);
-                        setCurrentStep(2);
+                        if (services.length > 0) {
+                            setShowServiceModal(true);
+                            setCurrentStep(2);
+                        }
                     }}
-                    disabled={false}
+                    disabled={services.length === 0}
                 />
 
                 {/* 3. בחירת יום */}
@@ -507,7 +547,10 @@ const BookAppointmentScreen: React.FC = () => {
                                 submitting) && { opacity: 0.5 },
                         ]}
                         disabled={
-                            !selectedService || !selectedDate || !selectedTime || submitting
+                            !selectedService ||
+                            !selectedDate ||
+                            !selectedTime ||
+                            submitting
                         }
                         onPress={handleSubmit}
                     >
@@ -576,22 +619,28 @@ const BookAppointmentScreen: React.FC = () => {
                             </TouchableOpacity>
                         </View>
 
-                        {services.map((srv) => (
-                            <TouchableOpacity
-                                key={srv.id}
-                                style={styles.chip}
-                                onPress={() => {
-                                    setSelectedService(srv);
-                                    setShowServiceModal(false);
-                                    setCurrentStep(3);
-                                    setSelectedDate(null);
-                                    setSelectedTime(null);
-                                }}
-                            >
-                                <Text style={styles.chipPrice}>{srv.price}</Text>
-                                <Text style={styles.chipText}>{srv.name}</Text>
-                            </TouchableOpacity>
-                        ))}
+                        {services.length === 0 ? (
+                            <Text style={styles.emptyText}>
+                                אין טיפולים מוגדרים לעסק.
+                            </Text>
+                        ) : (
+                            services.map((srv) => (
+                                <TouchableOpacity
+                                    key={srv.id}
+                                    style={styles.chip}
+                                    onPress={() => {
+                                        setSelectedService(srv);
+                                        setShowServiceModal(false);
+                                        setCurrentStep(3);
+                                        setSelectedDate(null);
+                                        setSelectedTime(null);
+                                    }}
+                                >
+                                    <Text style={styles.chipPrice}>{srv.price}</Text>
+                                    <Text style={styles.chipText}>{srv.name}</Text>
+                                </TouchableOpacity>
+                            ))
+                        )}
                     </View>
                 </View>
             </Modal>

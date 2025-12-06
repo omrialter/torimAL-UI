@@ -4,20 +4,24 @@ import FooterSection from "@/components/FooterSection";
 import SimpleAccordion from "@/components/SimpleAccordion";
 import VideoBanner from "@/components/VideoBanner";
 import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
-import { useRouter } from 'expo-router';
+import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import {
+    Linking,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
+} from "react-native";
 import JumpingMsg from "../../components/jumpingMsg";
 import WorksGallery from "../../components/WorksGallery";
 import { useAuth } from "../../contexts/AuthContext";
 
-
-
 export default function Index() {
     const router = useRouter();
     const [expanded, setExpanded] = useState(true);
-    const handlePress = () => setExpanded(!expanded);
-    const { businessData } = useBusinessDataContext();
+    const { businessData, colors } = useBusinessDataContext();
     const { isAdmin } = useAuth();
 
     useEffect(() => {
@@ -37,16 +41,23 @@ export default function Index() {
         require("@/assets/images/nails6.jpg"),
     ];
 
+    const businessName = businessData?.name || "torimAL";
+
     return (
         <ScrollView
-            style={styles.root}
+            style={[styles.root, { backgroundColor: colors.secondary }]}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
         >
             {/* אזור ראש העמוד: באנר + הודעה מהעסק אחד על השני */}
             <View style={styles.heroSection}>
                 {/* הבאנר ברקע */}
-                <View style={styles.bannerShadow}>
+                <View
+                    style={[
+                        styles.bannerShadow,
+                        { shadowColor: colors.primary },
+                    ]}
+                >
                     <View style={styles.bannerWrap}>
                         <VideoBanner
                             source={require("@/assets/videos/bannerVideo.mp4")}
@@ -55,8 +66,15 @@ export default function Index() {
                         />
 
                         <View style={styles.titleContainer}>
-                            <Text style={styles.title}>
-                                {isAdmin ? "Welcome Boss!" : "Welcome to torimAL!"}
+                            <Text
+                                style={[
+                                    styles.title,
+                                    { color: colors.third },
+                                ]}
+                            >
+                                {isAdmin
+                                    ? "Welcome Boss!"
+                                    : `Welcome to ${businessName}!`}
                             </Text>
                         </View>
                     </View>
@@ -73,56 +91,90 @@ export default function Index() {
             {/* שאר התוכן של המסך */}
             <View style={styles.innerContent}>
                 <View style={styles.buttonWrap}>
-                    <TouchableOpacity style={styles.bookBtn} onPress={handleBookAppointment}>
-                        <Text style={styles.bookBtnText}>להזמנת תור</Text>
+                    <TouchableOpacity
+                        style={[
+                            styles.bookBtn,
+                            {
+                                backgroundColor: colors.primary,
+                                borderColor: colors.primary,
+                            },
+                        ]}
+                        onPress={handleBookAppointment}
+                    >
+                        <Text
+                            style={[
+                                styles.bookBtnText,
+                                { color: colors.third },
+                            ]}
+                        >
+                            להזמנת תור
+                        </Text>
                     </TouchableOpacity>
                 </View>
-                <View style={styles.hr} />
+
+                <View
+                    style={[
+                        styles.hr,
+                        { backgroundColor: colors.third, opacity: 0.2 },
+                    ]}
+                />
 
                 <WorksGallery images={images} />
 
-                <View style={styles.hr} />
+                <View
+                    style={[
+                        styles.hr,
+                        { backgroundColor: colors.third, opacity: 0.2 },
+                    ]}
+                />
 
                 <BannerWithAbout
-
                     mainImage={require("@/assets/images/banner2.jpg")}
                     title="קצת על הסטודיו"
                     description="כאן תוכלי לכתוב כמה מילים על העסק – ניסיון, סגנון, מה מיוחד אצלך ועוד."
                 />
             </View>
 
-            <View style={styles.hr} />
-
-
-
+            <View
+                style={[
+                    styles.hr,
+                    { backgroundColor: colors.third, opacity: 0.2 },
+                ]}
+            />
 
             <ContactInfoSection
                 phone="054-3010576"
                 address="ספיר 15 שערי תקווה"
                 onPressCall={() => Linking.openURL("tel:0543010576")}
-                onPressNavigate={() => Linking.openURL("https://waze.com/ul?q=ספיר%2015%20שערי%20תקווה")}
+                onPressNavigate={() =>
+                    Linking.openURL(
+                        "https://waze.com/ul?q=ספיר%2015%20שערי%20תקווה"
+                    )
+                }
             />
 
-
             <FooterSection
-                onPressTiktok={() => Linking.openURL("https://www.tiktok.com/")}
-                onPressFacebook={() => Linking.openURL("https://www.facebook.com/")}
-                onPressInstagram={() => Linking.openURL("https://www.instagram.com/")}
+                onPressTiktok={() =>
+                    Linking.openURL("https://www.tiktok.com/")
+                }
+                onPressFacebook={() =>
+                    Linking.openURL("https://www.facebook.com/")
+                }
+                onPressInstagram={() =>
+                    Linking.openURL("https://www.instagram.com/")
+                }
                 onPressWhatsapp={() =>
                     Linking.openURL("https://wa.me/972527404249")
                 }
             />
-
         </ScrollView>
     );
-
-
 }
 
 const styles = StyleSheet.create({
     root: {
         flex: 1,
-        backgroundColor: "#f9ebf2ff",
+        backgroundColor: "#f9ebf2ff", // fallback, יידרס ע"י colors.secondary
     },
 
     scrollContent: {
@@ -132,7 +184,7 @@ const styles = StyleSheet.create({
     // כל הראש – באנר + אקורדיון מעליו
     heroSection: {
         width: "100%",
-        position: "relative",   // חשוב בשביל ה־absolute של האקורדיון
+        position: "relative", // חשוב בשביל ה־absolute של האקורדיון
     },
 
     // האקורדיון יושב מעל הבאנר בדיוק באותה נקודה
@@ -173,7 +225,7 @@ const styles = StyleSheet.create({
 
     title: {
         fontWeight: "bold",
-        color: "white",
+        color: "white", // יידרס ע"י colors.third
         fontSize: 24,
         marginTop: 4,
         textAlign: "center",
@@ -195,8 +247,8 @@ const styles = StyleSheet.create({
 
     bookBtn: {
         borderWidth: 1,
-        borderColor: "black",
-        backgroundColor: "white",
+        borderColor: "black", // יידרס ע"י colors.primary
+        backgroundColor: "white", // יידרס ע"י colors.primary
         paddingVertical: 12,
         paddingHorizontal: 32,
         borderRadius: 999,
@@ -206,7 +258,7 @@ const styles = StyleSheet.create({
     },
 
     bookBtnText: {
-        color: "black",
+        color: "black", // יידרס ע"י colors.third
         fontSize: 18,
         fontWeight: "600",
     },
