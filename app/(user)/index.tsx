@@ -2,11 +2,12 @@ import BannerWithAbout from "@/components/BannerWithAbout";
 import ContactInfoSection from "@/components/ContactInfoSection";
 import FooterSection from "@/components/FooterSection";
 import SimpleAccordion from "@/components/SimpleAccordion";
-import VideoBanner from "@/components/VideoBanner";
 import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
+import { ResizeMode, Video } from "expo-av";
 import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+    Image,
     Linking,
     ScrollView,
     StyleSheet,
@@ -24,6 +25,14 @@ export default function Index() {
     const { businessData, colors } = useBusinessDataContext();
     const { isAdmin } = useAuth();
 
+    const business: any = businessData || {};
+
+    const colorsSafe = {
+        primary: colors?.primary ?? "#1d4ed8",
+        secondary: colors?.secondary ?? "#f3f4f6",
+        third: colors?.third ?? "#0b1120",
+    };
+
     useEffect(() => {
         setExpanded(true);
     }, []);
@@ -32,44 +41,77 @@ export default function Index() {
         router.push("/(user)/orderTor");
     };
 
-    const images = [
-        require("@/assets/images/nails1.png"),
-        require("@/assets/images/nails2.jpg"),
-        require("@/assets/images/nails3.jpg"),
-        require("@/assets/images/nails4.jpg"),
-        require("@/assets/images/nails5.jpg"),
-        require("@/assets/images/nails6.jpg"),
-    ];
+    /** גלריה – מהשרת בלבד */
+    const gallerySources = useMemo(() => {
+        const fromServer: string[] = business.portfolio || [];
+        return fromServer.map((url) => ({ uri: url }));
+    }, [business.portfolio]);
 
-    const businessName = businessData?.name || "torimAL";
+    const businessName = business.name || "TorimAL";
+
+    /** באנר ראשי (יכול להיות וידאו או תמונה מהשרת בלבד) */
+    const bannerUrl: string | undefined = business.banner;
+    const isVideoBanner =
+        typeof bannerUrl === "string" &&
+        /\.(mp4|mov|mkv|webm|avi)$/i.test(bannerUrl);
+
+    /** טלפון */
+    const phoneRaw: string = business.phone || "";
+    const phoneDigits = phoneRaw.replace(/[^0-9]/g, "");
+    const phoneForDisplay = phoneRaw || "לא צוין";
+
+    /** כתובת */
+    const addressFromServer: string = business.address || "";
+
+    const encodedAddress = encodeURIComponent(addressFromServer);
+
+    /** עלינו */
+    const aboutTitle = business.aboutUs ? "קצת עלינו" : "קצת על הסטודיו";
+    const aboutDescription = business.aboutUs || "";
+
+    const aboutImageSource = business.banner2
+        ? { uri: business.banner2 }
+        : undefined;
 
     return (
         <ScrollView
-            style={[styles.root, { backgroundColor: colors.secondary }]}
+            style={[styles.root, { backgroundColor: colorsSafe.secondary }]}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
         >
-            {/* אזור ראש העמוד: באנר + הודעה מהעסק אחד על השני */}
+            {/* באנר עליון */}
             <View style={styles.heroSection}>
-                {/* הבאנר ברקע */}
                 <View
                     style={[
                         styles.bannerShadow,
-                        { shadowColor: colors.primary },
+                        { shadowColor: colorsSafe.primary },
                     ]}
                 >
                     <View style={styles.bannerWrap}>
-                        <VideoBanner
-                            source={require("@/assets/videos/bannerVideo.mp4")}
-                            enableCaching={false}
-                            zIndex={0}
-                        />
+                        {bannerUrl ? (
+                            isVideoBanner ? (
+                                <Video
+                                    source={{ uri: bannerUrl }}
+                                    style={styles.bannerVideo}
+                                    resizeMode={ResizeMode.COVER}
+                                    isMuted
+                                    shouldPlay
+                                    isLooping
+                                />
+                            ) : (
+                                <Image
+                                    source={{ uri: bannerUrl }}
+                                    style={styles.bannerVideo}
+                                    resizeMode="cover"
+                                />
+                            )
+                        ) : null}
 
                         <View style={styles.titleContainer}>
                             <Text
                                 style={[
                                     styles.title,
-                                    { color: colors.third },
+                                    { color: colorsSafe.third },
                                 ]}
                             >
                                 {isAdmin
@@ -80,7 +122,7 @@ export default function Index() {
                     </View>
                 </View>
 
-                {/* האקורדיון יושב מעל הבאנר באותה נקודה */}
+                {/* הודעה מהעסק */}
                 <View style={styles.accordionOverlay}>
                     <SimpleAccordion title="הודעה מהעסק">
                         <JumpingMsg />
@@ -88,15 +130,16 @@ export default function Index() {
                 </View>
             </View>
 
-            {/* שאר התוכן של המסך */}
+            {/* המשך התוכן */}
             <View style={styles.innerContent}>
+                {/* כפתור הזמנה */}
                 <View style={styles.buttonWrap}>
                     <TouchableOpacity
                         style={[
                             styles.bookBtn,
                             {
-                                backgroundColor: colors.primary,
-                                borderColor: colors.primary,
+                                backgroundColor: colorsSafe.secondary,
+                                borderColor: colorsSafe.third,
                             },
                         ]}
                         onPress={handleBookAppointment}
@@ -104,7 +147,7 @@ export default function Index() {
                         <Text
                             style={[
                                 styles.bookBtnText,
-                                { color: colors.third },
+                                { color: colorsSafe.third },
                             ]}
                         >
                             להזמנת תור
@@ -115,44 +158,49 @@ export default function Index() {
                 <View
                     style={[
                         styles.hr,
-                        { backgroundColor: colors.third, opacity: 0.2 },
+                        { backgroundColor: colorsSafe.third, opacity: 0.2 },
                     ]}
                 />
 
-                <WorksGallery images={images} />
+                {/* גלריה */}
+                <WorksGallery images={gallerySources} />
 
                 <View
                     style={[
                         styles.hr,
-                        { backgroundColor: colors.third, opacity: 0.2 },
+                        { backgroundColor: colorsSafe.third, opacity: 0.2 },
                     ]}
                 />
 
+                {/* עלינו */}
                 <BannerWithAbout
-                    mainImage={require("@/assets/images/banner2.jpg")}
-                    title="קצת על הסטודיו"
-                    description="כאן תוכלי לכתוב כמה מילים על העסק – ניסיון, סגנון, מה מיוחד אצלך ועוד."
+                    mainImage={aboutImageSource}
+                    title={aboutTitle}
+                    description={aboutDescription}
                 />
             </View>
 
             <View
                 style={[
                     styles.hr,
-                    { backgroundColor: colors.third, opacity: 0.2 },
+                    { backgroundColor: colorsSafe.third, opacity: 0.2 },
                 ]}
             />
 
+            {/* פרטי קשר */}
             <ContactInfoSection
-                phone="054-3010576"
-                address="ספיר 15 שערי תקווה"
-                onPressCall={() => Linking.openURL("tel:0543010576")}
-                onPressNavigate={() =>
-                    Linking.openURL(
-                        "https://waze.com/ul?q=ספיר%2015%20שערי%20תקווה"
-                    )
+                phone={phoneForDisplay}
+                address={addressFromServer}
+                onPressCall={() =>
+                    phoneDigits && Linking.openURL(`tel:${phoneDigits}`)
                 }
+                onPressNavigate={() =>
+                    Linking.openURL(`https://waze.com/ul?q=${encodedAddress}`)
+                }
+                backgroundImageUrl={business.banner3}
             />
 
+            {/* פוטר */}
             <FooterSection
                 onPressTiktok={() =>
                     Linking.openURL("https://www.tiktok.com/")
@@ -174,20 +222,14 @@ export default function Index() {
 const styles = StyleSheet.create({
     root: {
         flex: 1,
-        backgroundColor: "#f9ebf2ff", // fallback, יידרס ע"י colors.secondary
     },
-
     scrollContent: {
         paddingBottom: 24,
     },
-
-    // כל הראש – באנר + אקורדיון מעליו
     heroSection: {
         width: "100%",
-        position: "relative", // חשוב בשביל ה־absolute של האקורדיון
+        position: "relative",
     },
-
-    // האקורדיון יושב מעל הבאנר בדיוק באותה נקודה
     accordionOverlay: {
         position: "absolute",
         top: 0,
@@ -195,7 +237,6 @@ const styles = StyleSheet.create({
         right: 0,
         zIndex: 10,
     },
-
     bannerWrap: {
         width: "100%",
         height: 240,
@@ -204,7 +245,6 @@ const styles = StyleSheet.create({
         borderBottomLeftRadius: 40,
         borderBottomRightRadius: 40,
     },
-
     bannerShadow: {
         width: "100%",
         borderRadius: 18,
@@ -214,41 +254,34 @@ const styles = StyleSheet.create({
         shadowOffset: { width: 0, height: 6 },
         elevation: 10,
     },
-
+    bannerVideo: {
+        width: "100%",
+        height: "100%",
+    },
     titleContainer: {
         position: "absolute",
         top: 50,
         width: "100%",
         alignItems: "center",
-        zIndex: 2,
     },
-
     title: {
         fontWeight: "bold",
-        color: "white", // יידרס ע"י colors.third
         fontSize: 24,
-        marginTop: 4,
         textAlign: "center",
     },
-
-    // כל מה שבא אחרי הראש (כפתור, גלריה, באנר שני)
     innerContent: {
         paddingHorizontal: 16,
         gap: 16,
         marginTop: 16,
         marginBottom: 16,
     },
-
     buttonWrap: {
         marginTop: 16,
         width: "100%",
         alignItems: "center",
     },
-
     bookBtn: {
         borderWidth: 1,
-        borderColor: "black", // יידרס ע"י colors.primary
-        backgroundColor: "white", // יידרס ע"י colors.primary
         paddingVertical: 12,
         paddingHorizontal: 32,
         borderRadius: 999,
@@ -256,16 +289,12 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         elevation: 4,
     },
-
     bookBtnText: {
-        color: "black", // יידרס ע"י colors.third
         fontSize: 18,
         fontWeight: "600",
     },
-
     hr: {
         height: 1,
-        backgroundColor: "white",
         marginTop: 1,
         marginBottom: 1,
     },

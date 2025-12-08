@@ -9,7 +9,7 @@ import {
     StyleSheet,
     Text,
     TouchableOpacity,
-    View,
+    View
 } from "react-native";
 import { CalendarList } from "react-native-calendars";
 
@@ -17,6 +17,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
 import { useRouter } from "expo-router";
 import { URL, apiFetch } from "../../services/api";
+
 
 // ---------- Constants & Types ----------
 
@@ -159,13 +160,22 @@ const intervalsOverlap = (
 
 const BookAppointmentScreen: React.FC = () => {
     const { user, userToken } = useAuth();
+    console.log("👤 user from AuthContext (BookAppointment):", user);
+
     const { businessData } = useBusinessDataContext();
     const router = useRouter();
 
     // הטלת טיפוס על businessData בהתאם למה שהשרת מחזיר אחרי populate
     const business = businessData as BusinessForBooking | null;
 
-    const clientId = user?._id ?? null;
+
+
+
+    const clientId =
+        (user as any)?._id ??
+        (user as any)?.id ??
+        (user as any)?.userId ??
+        null;
 
     const [currentStep, setCurrentStep] = useState<StepNumber>(1);
 
@@ -343,8 +353,30 @@ const BookAppointmentScreen: React.FC = () => {
     // ---------- שליחת התור לשרת ----------
 
     const handleSubmit = async () => {
-        if (!clientId || !userToken || !selectedService || !selectedDate || !selectedTime)
+        console.log("▶ handleSubmit pressed");
+
+        console.log("📊 state before submit:", {
+            clientId,
+            hasToken: !!userToken,
+            selectedService: selectedService ? selectedService.name : null,
+            selectedDate: selectedDate ? selectedDate.toISOString() : null,
+            selectedTime: selectedTime ? selectedTime.toISOString() : null,
+        });
+
+        if (!clientId || !userToken || !selectedService || !selectedDate || !selectedTime) {
+            console.log("⛔ Missing data, aborting submit");
+
+            let msg = "יש למלא את כל השלבים לפני קביעת התור.";
+
+            if (!userToken) msg = "נראה שאתה לא מחובר, נסה להתחבר מחדש.";
+            else if (!clientId) msg = "לא זוהה לקוח מחובר, נסה לצאת ולהיכנס שוב.";
+            else if (!selectedService) msg = "בחר טיפול לפני קביעת תור.";
+            else if (!selectedDate) msg = "בחר יום לפני קביעת תור.";
+            else if (!selectedTime) msg = "בחר שעה לפני קביעת תור.";
+
+            Alert.alert("לא ניתן לקבוע תור", msg);
             return;
+        }
 
         const workerId =
             selectedStaff?.id ||
@@ -378,6 +410,8 @@ const BookAppointmentScreen: React.FC = () => {
                 notes: notes || "",
             };
 
+            console.log("📤 sending POST /appointments with body:", body);
+
             const res = await apiFetch(API_URL, {
                 method: "POST",
                 headers: {
@@ -386,7 +420,8 @@ const BookAppointmentScreen: React.FC = () => {
                 body: JSON.stringify(body),
             });
 
-            // --- SUCCESS ---
+            console.log("📥 POST /appointments status:", res.status);
+
             if (res.status === 201) {
                 const appt: Appointment = await res.json();
                 console.log("✅ created appointment", appt);
@@ -395,7 +430,6 @@ const BookAppointmentScreen: React.FC = () => {
                 return;
             }
 
-            // --- SLOT TAKEN ---
             if (res.status === 409) {
                 Alert.alert(
                     "התור נתפס",
@@ -404,7 +438,6 @@ const BookAppointmentScreen: React.FC = () => {
                 return;
             }
 
-            // --- MAX CONFIRMED APPOINTMENTS ---
             if (res.status === 403) {
                 const txt = await res.text();
 
@@ -425,9 +458,8 @@ const BookAppointmentScreen: React.FC = () => {
                 return;
             }
 
-            // --- OTHER ERRORS ---
             const txt = await res.text();
-            console.log("❌ POST /appointments status:", res.status);
+            console.log("❌ POST /appointments non-201 status:", res.status);
             console.log("❌ POST /appointments body:", txt);
 
             let serverMsg = "לא הצלחנו לקבוע את התור, נסה שוב.";
@@ -447,6 +479,7 @@ const BookAppointmentScreen: React.FC = () => {
             setSubmitting(false);
         }
     };
+
 
     // ---------- Render ----------
 

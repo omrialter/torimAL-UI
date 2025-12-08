@@ -24,6 +24,7 @@ interface Props {
     address: string;
     onPressCall?: () => void;
     onPressNavigate?: () => void;
+    backgroundImageUrl?: string; // תמונת רקע מהשרת (אופציונלי)
 }
 
 export default function ContactInfoSection({
@@ -31,6 +32,7 @@ export default function ContactInfoSection({
     address,
     onPressCall,
     onPressNavigate,
+    backgroundImageUrl,
 }: Props) {
     const [showDetails, setShowDetails] = useState(false);
 
@@ -39,17 +41,26 @@ export default function ContactInfoSection({
         setShowDetails((prev) => !prev);
     };
 
+    const Container = ({ children }: { children: React.ReactNode }) => {
+        // אם יש תמונת רקע ואנחנו במצב "תמונה" – נשתמש ב-ImageBackground
+        if (!showDetails && backgroundImageUrl) {
+            return (
+                <ImageBackground
+                    source={{ uri: backgroundImageUrl }}
+                    style={[styles.card, styles.cardWithImage]}
+                    imageStyle={styles.backgroundImage}
+                >
+                    {children}
+                </ImageBackground>
+            );
+        }
+
+        // אחרת – כרטיס רגיל
+        return <View style={styles.card}>{children}</View>;
+    };
+
     return (
-        <ImageBackground
-            source={
-                showDetails ? undefined : require("@/assets/images/banner3.jpg")
-            }
-            style={[
-                styles.card,
-                !showDetails && styles.cardWithImage,
-            ]}
-            imageStyle={styles.backgroundImage}
-        >
+        <Container>
             {/* ---- טקסטים (ימינה למעלה) ---- */}
             {showDetails && (
                 <View style={styles.topContent}>
@@ -59,7 +70,7 @@ export default function ContactInfoSection({
                     </View>
 
                     <View style={[styles.row, { marginTop: 6 }]}>
-                        <Ionicons name="person-outline" size={18} color="#111827" />
+                        <Ionicons name="location-outline" size={18} color="#111827" />
                         <Text style={styles.text}>כתובת: {address}</Text>
                     </View>
                 </View>
@@ -77,7 +88,7 @@ export default function ContactInfoSection({
                     </Text>
                 </TouchableOpacity>
             </View>
-        </ImageBackground>
+        </Container>
     );
 }
 
@@ -92,6 +103,7 @@ const styles = StyleSheet.create({
         borderWidth: 2,
         borderColor: "#ffffff",
         minHeight: 200,
+        backgroundColor: "#ffffff",
     },
     // במצב תמונה — גבוה יותר
     cardWithImage: {
@@ -104,9 +116,9 @@ const styles = StyleSheet.create({
 
     /* ----- טקסטים נצמדים למעלה ----- */
     topContent: {
-        alignItems: "flex-end",   // טקסט לימין
+        alignItems: "flex-end", // טקסט לימין
         justifyContent: "flex-start",
-        marginBottom: 20,         // רווח קטן מהכפתורים
+        marginBottom: 20, // רווח קטן מהכפתורים
     },
 
     row: {
@@ -124,7 +136,7 @@ const styles = StyleSheet.create({
     bottomButtons: {
         flexDirection: "row",
         justifyContent: "space-between",
-        marginTop: "auto",    // ⭐ מבטיח שזה תמיד בתחתית!
+        marginTop: "auto", // מבטיח שזה תמיד בתחתית
     },
 
     pillButton: {

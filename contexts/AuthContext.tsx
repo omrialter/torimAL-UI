@@ -29,10 +29,10 @@ export type AuthUser = {
 
 type AuthContextType = {
     userToken: string | null;
-    user: AuthUser | null;       // 👈 מידע על המשתמש
-    isAdmin: boolean | null;     // null = לא ידוע עדיין
-    adminReady: boolean;         // סיים בדיקת שרת
-    appReady: boolean;           // סיים Bootstrap מה-SecureStore
+    user: AuthUser | null; // 👈 מידע על המשתמש
+    isAdmin: boolean | null; // null = לא ידוע עדיין
+    adminReady: boolean; // סיים בדיקת שרת
+    appReady: boolean; // סיים Bootstrap מה-SecureStore
     login: (token: string) => Promise<void>;
     logout: () => Promise<void>;
     refreshAdmin: () => Promise<void>;
@@ -55,6 +55,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     // מזהה טיימר ל"בקרה לפני פקיעה"
     const expiryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+    // עוזר קטן: בונה AuthUser מתוך JWT מינימלי
+    const buildUserFromToken = (token: string | null): AuthUser | null => {
+        if (!token) return null;
+        try {
+            const dec = jwtDecode<DecodedToken>(token);
+            if (!dec?._id || !dec.business) return null;
+
+            return {
+                _id: dec._id,
+                role: (dec.role as "user" | "admin") || "user",
+                business: dec.business,
+            };
+        } catch {
+            return null;
+        }
+    };
+
     // --- Bootstrap: טוען טוקן ודגל אדמין מה-SecureStore
     useEffect(() => {
         (async () => {
@@ -68,19 +85,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
                 setAuthToken(token); // כל הקריאות דרך services/api יישאו את הטוקן
                 console.log("🔐 Stored JWT token:", token);
 
-                // נפענח את ה־JWT כדי לקבל _id/business כבר בשלב הזה
-                try {
-                    const dec = jwtDecode<DecodedToken>(token);
-                    if (dec?._id && dec.business) {
-                        setUser({
-                            _id: dec._id,
-                            role: (dec.role as "user" | "admin") || "user",
-                            business: dec.business,
-                        });
-                    }
-                } catch {
-                    // אם הפענוח נכשל – נחכה ל־refreshAdmin
+                // ננסה כבר עכשיו לבנות user מינימלי מה־JWT
+                const u = buildUserFromToken(token);
+                if (u) {
+                    setUser(u);
                 }
+            } else {
+                setUser(null);
             }
 
             if (cachedIsAdmin === "true") setIsAdmin(true);
@@ -115,52 +126,75 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             });
 
             if (res.status === 401) {
-                await logout(); // טוקן פג/לא תקין
+                // טוקן לא תקין/פג
+                await logout();
                 return;
             }
 
-            // אם תבחר להחזיר 403 ל"לא אדמין" בצד שרת:
+            let data: any = null;
+            try {
+                data = await res.json();
+            } catch {
+                // ייתכן ואין גוף תשובה – נתעלם
+            }
+
             if (res.status === 403) {
+                // משתמש מחובר אבל לא אדמין
                 setIsAdmin(false);
                 await SecureStore.setItemAsync(IS_ADMIN_KEY, "false");
+
+                // אם קיבלנו פרטי משתמש – נעדכן user
+                if (data?._id) {
+                    setUser((prev) => ({
+                        ...(prev || {}),
+                        _id: data._id,
+                        role: (data.role as "user" | "admin") || "user",
+                        business: data.business ?? prev?.business,
+                        ...data,
+                    }));
+                } else if (!user) {
+                    // fallback: לבנות מה-token אם עדיין אין user
+                    const fromToken = buildUserFromToken(userToken);
+                    if (fromToken) setUser(fromToken);
+                }
+
                 setAdminReady(true);
-                // עדיין יכולים לקבל מהשרת _id/business ולהכניס ל-user אם מחזיר
-                try {
-                    const data = await res.json();
-                    if (data?._id) {
-                        setUser((prev) => ({
-                            ...(prev || {}),
-                            _id: data._id,
-                            role: data.role ?? (prev?.role ?? "user"),
-                            business: data.business ?? prev?.business,
-                        }));
-                    }
-                } catch { }
                 return;
             }
 
             if (!res.ok) {
-                setAdminReady(true); // שגיאת שרת/רשת — לא מפילים UX
+                // שגיאה אחרת – לא מפילים את המשתמש, רק מסמנים שסיימנו
+                setAdminReady(true);
                 return;
             }
 
-            const data = await res.json(); // מצופה { _id, role, business, ... }
+            // 200 OK – השרת מחזיר לנו את פרטי המשתמש
             const admin = data?.role === "admin";
             setIsAdmin(admin);
             await SecureStore.setItemAsync(IS_ADMIN_KEY, admin ? "true" : "false");
+
             if (data?._id && data.business) {
-                setUser({
+                setUser((prev) => ({
                     _id: data._id,
-                    role: admin ? "admin" : "user",
+                    role: (data.role as "user" | "admin") || "user",
                     business: data.business,
+                    ...prev,
                     ...data,
-                });
+                }));
+            } else {
+                // אם השרת לא החזיר כלום, לפחות נשאר עם ה־user מה־JWT
+                if (!user) {
+                    const fromToken = buildUserFromToken(userToken);
+                    if (fromToken) setUser(fromToken);
+                }
             }
+
             setAdminReady(true);
-        } catch {
+        } catch (e) {
+            console.log("❌ refreshAdmin error:", e);
             setAdminReady(true); // שגיאת fetch — מתייחסים בעדינות
         }
-    }, [userToken]);
+    }, [userToken, user]);
 
     // --- תיזמון בדיקה מעט לפני פקיעת הטוקן (אם יש exp)
     useEffect(() => {
@@ -214,25 +248,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
     // --- login/logout
     const login = async (token: string) => {
+        // שומרים טוקן
         await SecureStore.setItemAsync(JWT_KEY, token);
         setAuthToken(token);
         setUserToken(token);
         setIsAdmin(null);
         setAdminReady(false);
 
-        // נפענח מיד את הטוקן כדי לדעת מי המשתמש
-        try {
-            const dec = jwtDecode<DecodedToken>(token);
-            if (dec?._id && dec.business) {
-                setUser({
-                    _id: dec._id,
-                    role: (dec.role as "user" | "admin") || "user",
-                    business: dec.business,
-                });
-            }
-        } catch { }
+        // בונים מיד user מינימלי מה־JWT כדי שהמסכים יקבלו clientId
+        const u = buildUserFromToken(token);
+        if (u) {
+            setUser(u);
+        } else {
+            setUser(null);
+        }
 
-        await refreshAdmin();
+        // לא קוראים כאן ל-refreshAdmin עם הטוקן הישן;
+        // ה-useEffect של userToken ידאג לקרוא לו עם הטוקן החדש.
     };
 
     const logout = async () => {

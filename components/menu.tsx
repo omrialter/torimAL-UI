@@ -1,6 +1,6 @@
 // components/CustomDrawer.tsx
 import { useUserDataContext } from "@/contexts/UserDataContext";
-import { Link } from "expo-router";
+import { Link, usePathname } from "expo-router";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
     Animated,
@@ -26,6 +26,11 @@ const SCREEN_WIDTH = Dimensions.get("window").width;
 const DRAWER_WIDTH = Math.round(SCREEN_WIDTH * 0.7);
 
 export default function Menu({ children, style }: Props) {
+    const pathname = usePathname();
+
+    // 🛑 מסכים שבהם אין תפריט
+    const isAuthScreen = pathname === "/login" || pathname === "/signup";
+
     const { userData } = useUserDataContext();
     const { logout, isAdmin } = useAuth();
 
@@ -44,9 +49,10 @@ export default function Menu({ children, style }: Props) {
     );
 
     const openDrawer = useCallback(() => {
+        if (isAuthScreen) return; // 🔒 אל תפתח בעמודי לוגין/סיינאפ
         setOpen(true);
         animateTo(0);
-    }, [animateTo]);
+    }, [animateTo, isAuthScreen]);
 
     const closeDrawer = useCallback(() => {
         animateTo(DRAWER_WIDTH);
@@ -54,75 +60,82 @@ export default function Menu({ children, style }: Props) {
     }, [animateTo]);
 
     const toggleDrawer = useCallback(() => {
+        if (isAuthScreen) return; // 🔒 חסימה גם ב-toggle
         open ? closeDrawer() : openDrawer();
-    }, [open, openDrawer, closeDrawer]);
+    }, [open, openDrawer, closeDrawer, isAuthScreen]);
 
     const content = useMemo(() => children(toggleDrawer), [children, toggleDrawer]);
 
     return (
         <View style={[{ flex: 1 }, style]}>
-            {/* Drawer panel */}
-            <Animated.View
-                style={[
-                    styles.drawer,
-                    { transform: [{ translateX }] },
-                ]}
-            >
-                {/* Header row */}
-                <View style={styles.headerRow}>
-                    <TouchableOpacity
-                        onPress={closeDrawer}
-                        accessibilityRole="button"
-                        accessibilityLabel="Close menu"
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        style={styles.closeBtn}
-                    >
-                        <Text style={styles.closeText}>✕</Text>
-                    </TouchableOpacity>
 
-                    <Text style={styles.section}>
-                        ברוך הבא, {userData?.name}
-                    </Text>
-                </View>
+            {/* הצד של התפריט — מוצג רק אם לא בלוגין/סיינאפ */}
+            {!isAuthScreen && (
+                <Animated.View
+                    style={[
+                        styles.drawer,
+                        { transform: [{ translateX }] },
+                    ]}
+                >
+                    {/* Header row */}
+                    <View style={styles.headerRow}>
+                        <TouchableOpacity
+                            onPress={closeDrawer}
+                            accessibilityRole="button"
+                            accessibilityLabel="Close menu"
+                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                            style={styles.closeBtn}
+                        >
+                            <Text style={styles.closeText}>✕</Text>
+                        </TouchableOpacity>
 
-                {/* Navigation Links */}
-                <View style={{ marginTop: 20 }}>
-                    <Link href="/" style={styles.link} onPress={closeDrawer}>
-                        🏠 בית
-                    </Link>
-                    <Link href="/ourTeam" style={styles.link} onPress={closeDrawer}>
-                        הצוות שלנו
-                    </Link>
-                    <Link href="/orderTor" style={styles.link} onPress={closeDrawer}>
-                        זימון תור
-                    </Link>
-                    <Link href="/torList" style={styles.link} onPress={closeDrawer}>
-                        התורים שלך
-                    </Link>
-                    <Link href="/" style={styles.link} onPress={closeDrawer}>
-                        קצת עלינו
-                    </Link>
+                        <Text style={styles.section}>
+                            ברוך הבא, {userData?.name}
+                        </Text>
+                    </View>
 
-                    {isAdmin && (
-                        <View style={styles.adminBox}>
-                            <Link href="/admin/bi_page" style={styles.link} onPress={closeDrawer}>
-                                BI Page
-                            </Link>
-                            <Link href="/admin/torim" style={styles.link} onPress={closeDrawer}>
-                                Admin Appointments
-                            </Link>
-                        </View>
-                    )}
-                </View>
+                    {/* Navigation Links */}
+                    <View style={{ marginTop: 20 }}>
+                        <Link href="/" style={styles.link} onPress={closeDrawer}>
+                            🏠 בית
+                        </Link>
+                        <Link href="/ourTeam" style={styles.link} onPress={closeDrawer}>
+                            הצוות שלנו
+                        </Link>
+                        <Link href="/orderTor" style={styles.link} onPress={closeDrawer}>
+                            זימון תור
+                        </Link>
+                        <Link href="/torList" style={styles.link} onPress={closeDrawer}>
+                            התורים שלך
+                        </Link>
+                        <Link href="/" style={styles.link} onPress={closeDrawer}>
+                            קצת עלינו
+                        </Link>
 
-                {/* Logout Button */}
-                <View style={styles.logoutBtn}>
-                    <Button title="Log out" onPress={() => logout()} />
-                </View>
-            </Animated.View>
+                        {isAdmin && (
+                            <View style={styles.adminBox}>
+                                <Link href="/admin/bi_page" style={styles.link} onPress={closeDrawer}>
+                                    BI Page
+                                </Link>
+                                <Link href="/admin/torim" style={styles.link} onPress={closeDrawer}>
+                                    Admin Appointments
+                                </Link>
+                                <Link href="/admin/settings" style={styles.link} onPress={closeDrawer}>
+                                    Admin Settings
+                                </Link>
+                            </View>
+                        )}
+                    </View>
+
+                    {/* Logout Button */}
+                    <View style={styles.logoutBtn}>
+                        <Button title="Log out" onPress={() => logout()} />
+                    </View>
+                </Animated.View>
+            )}
 
             {/* Dim background when open */}
-            {open && (
+            {open && !isAuthScreen && (
                 <TouchableOpacity
                     style={styles.overlay}
                     activeOpacity={1}
@@ -183,12 +196,13 @@ const styles = StyleSheet.create({
         marginVertical: 12,
         textAlign: "right",
     },
+
     adminBox: {
         borderColor: "white",
         borderWidth: 1,
         paddingHorizontal: 8,
         paddingVertical: 2,
-        marginTop: 24
+        marginTop: 24,
     },
 
     overlay: {

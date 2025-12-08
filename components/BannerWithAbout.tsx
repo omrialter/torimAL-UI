@@ -9,26 +9,34 @@ import {
 } from "react-native";
 
 interface Props {
-    mainImage: ImageSourcePropType;
-    title?: string;       // כותרת לחלק "עלינו" (לא חובה)
-    description?: string; // טקסט עלינו (לא חובה)
+    mainImage?: ImageSourcePropType; // עכשיו אופציונלי ✔
+    title?: string;
+    description?: string;
 }
 
 export default function BannerWithAbout({
     mainImage,
     title = "קצת עלינו",
-    description = "ברוכים הבאים לעסק שלנו! אנחנו מתמחים בשירות אישי, מקצועי ואוהב. כאן אפשר לכתוב כמה שורות שמספרות עלייך, על הסטודיו, ועל מה שמייחד אתכם.",
+    description = "ברוכים הבאים לעסק שלנו! כאן אפשר לכתוב כמה שורות שמספרות עלייך, על הסטודיו, ועל מה שמייחד אתכם.",
 }: Props) {
     const [showAbout, setShowAbout] = useState(false);
+
+    const hasImage = Boolean(mainImage);
 
     return (
         <View style={styles.container}>
             {!showAbout ? (
                 <>
-                    {/* התמונה */}
-                    <Image source={mainImage} style={styles.image} resizeMode="cover" />
+                    {/* תמונה מוצגת רק אם קיימת */}
+                    {hasImage && (
+                        <Image
+                            source={mainImage!}
+                            style={styles.image}
+                            resizeMode="cover"
+                        />
+                    )}
 
-                    {/* כפתור קצת עלינו */}
+                    {/* כפתור "קצת עלינו" */}
                     <TouchableOpacity
                         style={styles.button}
                         onPress={() => setShowAbout(true)}
@@ -62,12 +70,13 @@ const styles = StyleSheet.create({
         borderRadius: 15,
         overflow: "hidden",
         backgroundColor: "white",
-
     },
+
     image: {
         width: "100%",
         height: 220,
     },
+
     button: {
         borderWidth: 1,
         borderColor: "black",
@@ -76,7 +85,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
         width: "100%",
-        alignSelf: "center",   // ⭐️ הכפתור יושב באמצע 🎯
+        alignSelf: "center",
         borderBottomLeftRadius: 15,
         borderBottomRightRadius: 15,
     },
@@ -85,16 +94,18 @@ const styles = StyleSheet.create({
         color: "black",
         fontSize: 18,
         fontWeight: "600",
-
     },
+
     buttonText2: {
         color: "white",
         fontSize: 18,
         fontWeight: "600",
     },
+
     aboutWrapper: {
         backgroundColor: "black",
     },
+
     aboutBox: {
         backgroundColor: "white",
         padding: 20,
@@ -102,24 +113,26 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         alignItems: "center",
     },
+
     aboutTitle: {
         fontSize: 20,
         fontWeight: "700",
         marginBottom: 8,
         textAlign: "center",
     },
+
     aboutText: {
         fontSize: 16,
         textAlign: "center",
         lineHeight: 24,
-        color: "black"
+        color: "black",
     },
+
     backButton: {
         borderWidth: 1,
         borderColor: "black",
         backgroundColor: "black",
         paddingVertical: 10,
         alignItems: "center",
-        color: "white"
     },
 });
