@@ -116,7 +116,7 @@ interface Block {
     business: string;
     resource: string | null;
     start: string; // ISO
-    end: string;   // ISO
+    end: string; // ISO
     reason: string;
     notes?: string | null;
 }
@@ -273,8 +273,7 @@ const BookAppointmentScreen = () => {
     }, [business]);
 
     useEffect(() => {
-        if (!selectedStaff && staffOptions.length === 1)
-            setSelectedStaff(staffOptions[0]);
+        if (!selectedStaff && staffOptions.length === 1) setSelectedStaff(staffOptions[0]);
     }, [staffOptions]);
 
     // Load appointments for selected day
@@ -302,7 +301,7 @@ const BookAppointmentScreen = () => {
         load();
     }, [selectedDate, selectedStaff, userToken, staffOptions]);
 
-    // Load blocks for selected day (לטובת חסימה של שעות ספציפיות)
+    // Load blocks for selected day
     useEffect(() => {
         const loadBlocks = async () => {
             if (!selectedDate || !userToken) return;
@@ -328,9 +327,7 @@ const BookAppointmentScreen = () => {
         loadBlocks();
     }, [selectedDate, selectedStaff, userToken, staffOptions]);
 
-    // ------------------------------
-    // טעינת חסימות לכל הטווח (לצביעה ביומן)
-    // ------------------------------
+    // Range blocks for calendar coloring
     useEffect(() => {
         const loadRangeBlocks = async () => {
             if (!userToken || !business) return;
@@ -338,12 +335,11 @@ const BookAppointmentScreen = () => {
             try {
                 const fromDate = new Date();
                 const toDate = new Date();
-                toDate.setMonth(toDate.getMonth() + 6); // חצי שנה קדימה
+                toDate.setMonth(toDate.getMonth() + 6);
 
                 const fromStr = dateToYMD(fromDate);
                 const toStr = dateToYMD(toDate);
 
-                // לא שולחים resource -> נקבל את כל הבלוקים של העסק
                 const res = await apiFetch(
                     `${BLOCKS_API_URL}/list?from=${fromStr}&to=${toStr}`
                 );
@@ -357,13 +353,11 @@ const BookAppointmentScreen = () => {
                 const map: { [dateStr: string]: boolean } = {};
 
                 blocks.forEach((block) => {
-                    // מתייחסים רק לבלוקים של כל העסק (resource === null)
                     if (block.resource !== null) return;
 
                     const blockStart = new Date(block.start);
                     const blockEnd = new Date(block.end);
 
-                    // נעבור יום־יום בתוך הבלוק
                     const cur = new Date(blockStart);
                     cur.setHours(0, 0, 0, 0);
                     const endDay = new Date(blockEnd);
@@ -374,12 +368,9 @@ const BookAppointmentScreen = () => {
                         const opening = getOpeningRangeForDate(cur, business);
 
                         if (!opening) {
-                            // גם ככה העסק סגור / אין שעות פתיחה, נסמן ליתר ביטחון
                             map[ymd] = true;
                         } else {
                             const { dayStart, dayEnd } = opening;
-
-                            // אם הבלוק מכסה את כל שעות הפתיחה של אותו יום – נחסום אותו לגמרי
                             if (blockStart <= dayStart && blockEnd >= dayEnd) {
                                 map[ymd] = true;
                             }
@@ -399,15 +390,12 @@ const BookAppointmentScreen = () => {
         loadRangeBlocks();
     }, [userToken, business]);
 
-    // ------------------------------------------------------
-    // AVAILABLE TIME SLOTS — WITH openingHours + blocks
-    // ------------------------------------------------------
-
+    // Available slots
     const availableSlots = useMemo(() => {
         if (!selectedDate || !selectedService) return [];
 
         const opening = getOpeningRangeForDate(selectedDate, business);
-        if (!opening) return []; // day closed
+        if (!opening) return [];
 
         const { dayStart, dayEnd } = opening;
         const duration = selectedService.duration;
@@ -444,7 +432,7 @@ const BookAppointmentScreen = () => {
         return slots;
     }, [selectedDate, selectedService, dayAppointments, dayBlocks, business]);
 
-    // Opening hours lines for display
+    // Opening hours lines
     const openingLines = useMemo(() => {
         if (!business?.openingHours) return [];
         const lines: { day: string; text: string }[] = [];
@@ -461,10 +449,7 @@ const BookAppointmentScreen = () => {
         return lines;
     }, [business]);
 
-    // ------------------------------------------------------
-    // SUBMIT
-    // ------------------------------------------------------
-
+    // Submit
     const handleSubmit = async () => {
         if (!clientId || !selectedService || !selectedDate || !selectedTime)
             return Alert.alert("שגיאה", "יש למלא את כל השלבים");
@@ -510,15 +495,12 @@ const BookAppointmentScreen = () => {
         }
     };
 
-    // ------------------------------------------------------
-    // RENDER
-    // ------------------------------------------------------
-
+    // Render
     return (
         <View style={styles.container}>
             <Text style={styles.title}>הזמנת תור</Text>
 
-            {/* תצוגת שעות פתיחה למעלה */}
+            {/* Opening hours */}
             {openingLines.length > 0 && (
                 <View style={styles.openingBox}>
                     <Text style={styles.openingTitle}>שעות פעילות העסק</Text>
@@ -562,7 +544,9 @@ const BookAppointmentScreen = () => {
                     <View>
                         <Text style={styles.stepLabel}>טיפול</Text>
                         <Text style={styles.stepValue}>
-                            {selectedService?.name || "בחר טיפול"}
+                            {selectedService
+                                ? `${selectedService.name} · ${selectedService.price} ₪`
+                                : "בחר טיפול"}
                         </Text>
                     </View>
                 </TouchableOpacity>
@@ -671,7 +655,10 @@ const BookAppointmentScreen = () => {
                                     setCurrentStep(3);
                                 }}
                             >
-                                <Text>{srv.name}</Text>
+                                <View style={styles.chipRow}>
+                                    <Text style={styles.chipText}>{srv.name}</Text>
+                                    <Text style={styles.chipPrice}>{srv.price} ₪</Text>
+                                </View>
                             </TouchableOpacity>
                         ))}
                     </View>
@@ -928,6 +915,20 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         marginBottom: 10,
     },
+    chipRow: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+    },
+    chipText: {
+        fontSize: 14,
+        color: "#111827",
+    },
+    chipPrice: {
+        fontSize: 14,
+        fontWeight: "600",
+        color: "#111827",
+    },
 
     emptyText: {
         textAlign: "center",
@@ -974,7 +975,7 @@ const styles = StyleSheet.create({
         backgroundColor: "#1d4ed8",
     },
     dayContainerBlocked: {
-        backgroundColor: "#fee2e2", // רקע אדמדם עדין ליום חסום
+        backgroundColor: "#fee2e2",
     },
     dayText: {
         fontSize: 14,

@@ -73,6 +73,11 @@ interface Staff {
     name: string;
 }
 
+interface AdminStats {
+    todayCount: number;
+    futureCount: number;
+}
+
 // ---- קבועים ----
 
 const API_URL = `${URL}/appointments`;
@@ -136,6 +141,34 @@ const statusColor = (status: AppointmentStatus): string => {
     }
 };
 
+// כותרת יחסית ליום: היום / מחר / מחרתיים / עוד שבוע / בעוד X ימים / לפני X ימים
+const getRelativeDayLabel = (date: Date): string => {
+    const startOfDay = (d: Date) => {
+        const c = new Date(d);
+        c.setHours(0, 0, 0, 0);
+        return c;
+    };
+
+    const today = startOfDay(new Date());
+    const target = startOfDay(date);
+
+    const diffMs = target.getTime() - today.getTime();
+    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) return "היום";
+    if (diffDays === 1) return "מחר";
+    if (diffDays === 2) return "מחרתיים";
+    if (diffDays === 7) return "עוד שבוע";
+    if (diffDays > 2 && diffDays < 7) return `בעוד ${diffDays} ימים`;
+    if (diffDays > 7) return `בעוד ${diffDays} ימים`;
+
+    if (diffDays === -1) return "אתמול";
+    if (diffDays === -2) return "שלשום";
+    if (diffDays < -2) return `לפני ${Math.abs(diffDays)} ימים`;
+
+    return "";
+};
+
 // ---- קומפוננטת מסך ----
 
 const Torim: React.FC = () => {
@@ -153,6 +186,15 @@ const Torim: React.FC = () => {
     const [appointments, setAppointments] = useState<Appointment[]>([]);
     const [loading, setLoading] = useState(false);
     const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+    // סטטיסטיקות כלליות
+    const [stats, setStats] = useState<AdminStats | null>(null);
+    const [statsLoading, setStatsLoading] = useState(false);
+
+    const relativeDayLabel = useMemo(
+        () => getRelativeDayLabel(selectedDate),
+        [selectedDate]
+    );
 
     // ---- בניית רשימת עובדים מה-businessData ----
 
@@ -239,11 +281,47 @@ const Torim: React.FC = () => {
         }
     };
 
-    // להפעיל הבאה כל פעם שעובד או תאריך משתנים
+    // ---- הבאת סטטיסטיקות כלליות ----
+
+    const fetchStats = async () => {
+        if (!userToken) return;
+
+        let url = `${API_URL}/admin-stats`;
+        if (selectedStaff?.id) {
+            url += `?worker=${encodeURIComponent(selectedStaff.id)}`;
+        }
+
+        setStatsLoading(true);
+        try {
+            const res = await apiFetch(url, { method: "GET" });
+
+            if (!res.ok) {
+                console.log("❌ Failed GET /appointments/admin-stats");
+                setStats(null);
+                return;
+            }
+
+            const data: AdminStats = await res.json();
+            setStats(data);
+        } catch (err) {
+            console.error("❌ Error fetching admin stats:", err);
+            setStats(null);
+        } finally {
+            setStatsLoading(false);
+        }
+    };
+
+    // להביא תורים כל פעם שעובד או תאריך משתנים
     useEffect(() => {
         fetchAppointments();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [userToken, selectedStaff, selectedDate]);
+
+    // להביא סטטיסטיקות כל פעם שהעובד מתחלף / טוקן משתנה
+    useEffect(() => {
+        fetchStats();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [userToken, selectedStaff]);
 
     // ---- שינוי סטטוס ----
 
@@ -322,6 +400,31 @@ const Torim: React.FC = () => {
         <View style={styles.container}>
             <Text style={styles.title}>ניהול תורים</Text>
 
+            {/* סטטיסטיקות כלליות */}
+            <View style={styles.statsRow}>
+                <View style={styles.statCard}>
+                    <Text style={styles.statLabel}>תורים היום</Text>
+                    {statsLoading ? (
+                        <ActivityIndicator size="small" />
+                    ) : (
+                        <Text style={styles.statValue}>
+                            {stats ? stats.todayCount : "-"}
+                        </Text>
+                    )}
+                </View>
+
+                <View style={styles.statCard}>
+                    <Text style={styles.statLabel}>תורים עתידיים</Text>
+                    {statsLoading ? (
+                        <ActivityIndicator size="small" />
+                    ) : (
+                        <Text style={styles.statValue}>
+                            {stats ? stats.futureCount : "-"}
+                        </Text>
+                    )}
+                </View>
+            </View>
+
             {/* בחירת עובד – קודם שם, אחר כך "עובד" */}
             <TouchableOpacity
                 style={styles.selectorRow}
@@ -355,6 +458,11 @@ const Torim: React.FC = () => {
                 </Text>
                 <Text style={styles.selectorLabel}>תאריך</Text>
             </TouchableOpacity>
+
+            {/* כותרת שמצביעה על איזה יום מוצג */}
+            {relativeDayLabel ? (
+                <Text style={styles.dayLabel}>{relativeDayLabel}</Text>
+            ) : null}
 
             {/* רשימת תורים */}
             {loading ? (
@@ -574,6 +682,47 @@ const styles = StyleSheet.create({
         textAlign: "center",
     },
 
+    // סטטיסטיקות בראש המסך
+    statsRow: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        marginBottom: 12,
+    },
+    statCard: {
+        flex: 1,
+        backgroundColor: "#ffffff",
+        borderRadius: 16,
+        paddingVertical: 10,
+        paddingHorizontal: 14,
+        marginHorizontal: 4,
+        shadowColor: "#000",
+        shadowOpacity: 0.04,
+        shadowRadius: 4,
+        elevation: 1,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    statLabel: {
+        fontSize: 12,
+        color: "#6b7280",
+        marginBottom: 4,
+    },
+    statValue: {
+        fontSize: 20,
+        fontWeight: "700",
+        color: "#111827",
+    },
+
+    // כותרת יחסית ליום
+    dayLabel: {
+        fontSize: 20,
+        fontWeight: "600",
+        textAlign: "center",
+        color: "#4b5563",
+        marginTop: 18,      // ⭐ מרווח מלמעלה
+        marginBottom: 10,   // כבר קיים
+    },
+
     selectorRow: {
         flexDirection: "row",
         alignItems: "center",
@@ -625,7 +774,7 @@ const styles = StyleSheet.create({
         marginBottom: 8,
         borderBottomColor: "black",
         borderBottomWidth: 1,
-        paddingBottom: 4
+        paddingBottom: 4,
     },
 
     // שירות (שמאל)
