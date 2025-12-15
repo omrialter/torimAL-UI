@@ -52,13 +52,13 @@ const NAV_SECTIONS: {
         {
             key: "services",
             title: "שירותים",
-            subtitle: "הגדרת שירותים ומחירים (בקרוב)",
+            subtitle: "הגדרת שירותים ומחירים",
             icon: "💇‍♀️",
         },
         {
             key: "openingHours",
             title: "שעות עבודה",
-            subtitle: "שעות פתיחה וסגירה לכל יום",
+            subtitle: "שעות פתיחה וסגירה לכל יום + חסימות",
             icon: "🕒",
         },
         {
@@ -82,7 +82,7 @@ const NAV_SECTIONS: {
         {
             key: "employees",
             title: "ניהול עובדים",
-            subtitle: "הוספה ועריכת משתמשים (בקרוב)",
+            subtitle: "הוספה ועריכת משתמשים",
             icon: "👥",
         },
     ];
@@ -141,7 +141,7 @@ export default function Settings() {
             contentContainerStyle={styles.content}
         >
             <Text style={[styles.title, { color: colorsSafe.primary }]}>
-                הגדרות עסק
+                עמוד הגדרות
             </Text>
 
             {/* ניווט ראשי – גריד של קופסאות */}

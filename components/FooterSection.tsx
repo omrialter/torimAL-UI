@@ -17,7 +17,7 @@ export default function FooterSection({
     onPressWhatsapp,
 }: Props) {
     const openTorimAL = () => {
-        Linking.openURL("https://torimal.vercel.app");
+        Linking.openURL("https://torimal.co.il");
     };
 
     return (

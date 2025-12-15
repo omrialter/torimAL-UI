@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "647837370197",
+    "project_id": "toral-a9af7",
+    "storage_bucket": "toral-a9af7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:647837370197:android:772a3fadba445e205bd1dc",
+        "android_client_info": {
+          "package_name": "com.torimal.test"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCGjprxZtJi37zikREG22ieguzYPEo3jws"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,4 +1,3 @@
-// components/CustomDrawer.tsx
 import { useUserDataContext } from "@/contexts/UserDataContext";
 import { Link, usePathname } from "expo-router";
 import React, { useCallback, useMemo, useRef, useState } from "react";

@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import "dotenv/config";
 
 export default {
   expo: {
@@ -10,47 +10,11 @@ export default {
     scheme: "torimal",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
-    ios: {
-      supportsTablet: true
-    },
-    android: {
-      adaptiveIcon: {
-        foregroundImage: "./assets/images/adaptive-icon.png",
-        backgroundColor: "#ffffff"
-      },
-      edgeToEdgeEnabled: true
-    },
-    web: {
-      bundler: "metro",
-      output: "static",
-      favicon: "./assets/images/favicon.png"
-    },
-
-    plugins: [
-      "expo-router",
-
-      [
-        "expo-splash-screen",
-        {
-          image: "./assets/images/splash-icon.png",
-          imageWidth: 200,
-          resizeMode: "contain",
-          backgroundColor: "#ffffff"
-        }
-      ],
-
-      "expo-secure-store",
-      "expo-font",
-
-      // 👇 הוספה נדרשת לפי expo-doctor
-      "expo-web-browser"
-    ],
-
-    experiments: {
-      typedRoutes: true
-    },
 
     extra: {
+      eas: {
+        projectId: "fdc5244d-b3e3-4b32-8457-290e9d9e0a69",
+      },
       FIREBASE_API_KEY: process.env.FIREBASE_API_KEY,
       FIREBASE_AUTH_DOMAIN: process.env.FIREBASE_AUTH_DOMAIN,
       FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID,
@@ -58,7 +22,56 @@ export default {
       FIREBASE_MESSAGING_SENDER_ID: process.env.FIREBASE_MESSAGING_SENDER_ID,
       FIREBASE_APP_ID: process.env.FIREBASE_APP_ID,
       API_URL: process.env.API_URL,
-      BUSINESS_ID: "686e770ad4294c85f74f7ca3"
-    }
-  }
+      BUSINESS_ID: "686e770ad4294c85f74f7ca3",
+    },
+
+    ios: {
+      supportsTablet: true,
+    },
+
+    android: {
+      package: "com.torimal.test",
+      googleServicesFile: "./google-services.json",
+      adaptiveIcon: {
+        foregroundImage: "./assets/images/adaptive-icon.png",
+        backgroundColor: "#ffffff",
+      },
+      edgeToEdgeEnabled: true,
+
+      // ✅ LTR תמיד (כיבוי RTL ברמת AndroidManifest)
+      manifest: {
+        extraAttributes: {
+          "android:supportsRtl": "false",
+        },
+      },
+    },
+
+    web: {
+      bundler: "metro",
+      output: "static",
+      favicon: "./assets/images/favicon.png",
+    },
+
+    plugins: [
+      "expo-router",
+      "expo-localization",
+      [
+        "expo-splash-screen",
+        {
+          image: "./assets/images/splash-icon.png",
+          imageWidth: 200,
+          resizeMode: "contain",
+          backgroundColor: "#ffffff",
+        },
+      ],
+      "expo-secure-store",
+      "expo-font",
+      "expo-notifications",
+      "expo-web-browser",
+    ],
+
+    experiments: {
+      typedRoutes: true,
+    },
+  },
 };

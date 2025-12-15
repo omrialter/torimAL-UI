@@ -7,6 +7,7 @@ import { ResizeMode, Video } from "expo-av";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
+    I18nManager,
     Image,
     Linking,
     ScrollView,
@@ -18,6 +19,9 @@ import {
 import JumpingMsg from "../../components/jumpingMsg";
 import WorksGallery from "../../components/WorksGallery";
 import { useAuth } from "../../contexts/AuthContext";
+
+console.log("RTL?", I18nManager.isRTL);
+
 
 export default function Index() {
     const router = useRouter();
@@ -199,6 +203,8 @@ export default function Index() {
                 }
                 backgroundImageUrl={business.banner3}
             />
+
+
 
             {/* פוטר */}
             <FooterSection

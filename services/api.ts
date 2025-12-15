@@ -6,7 +6,7 @@ let AUTH_TOKEN: string | null = null;
 // נקרא את ה-API_URL מתוך extra
 const API_URL =
   Constants.expoConfig?.extra?.API_URL ||
-  "http://10.186.111.136:3005"; // fallback לפיתוח, אם חסר
+  "http://172.20.44.136:3005"; // fallback לפיתוח, אם חסר
 
 export const URL = API_URL;
 export const TOKEN_KEY = "posts_token";

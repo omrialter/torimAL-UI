@@ -13,6 +13,7 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
+import type { DateData } from "react-native-calendars";
 import { CalendarList } from "react-native-calendars";
 
 import { useAuth } from "@/contexts/AuthContext";
@@ -28,12 +29,7 @@ const BLOCKS_API_URL = `${URL}/blocks`;
 type AppointmentStatus = "confirmed" | "canceled" | "completed" | "no_show";
 const BLOCKING_STATUSES: AppointmentStatus[] = ["confirmed"];
 
-interface CalendarDay {
-    dateString: string;
-    day: number;
-    month: number;
-    year: number;
-}
+// ---------- Types ----------
 
 interface OpeningHoursRange {
     open: string | null;
@@ -126,7 +122,8 @@ interface BlockInterval {
     end: Date;
 }
 
-// Helpers
+// ---------- Helpers ----------
+
 const dateToYMD = (date: Date) =>
     `${date.getFullYear()}-${`${date.getMonth() + 1}`.padStart(2, "0")}-${`${date.getDate()}`.padStart(2, "0")}`;
 
@@ -149,7 +146,11 @@ const intervalsOverlap = (aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) =>
     aStart < bEnd && aEnd > bStart;
 
 const formatTime = (d: Date) =>
-    d.toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit", hour12: false });
+    d.toLocaleTimeString("he-IL", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    });
 
 const formatDate = (d: Date) =>
     d.toLocaleDateString("he-IL", { weekday: "long", day: "2-digit", month: "2-digit" });
@@ -205,6 +206,71 @@ const getOpeningRangeForDate = (
     return { dayStart, dayEnd };
 };
 
+// ---------------------------------------------
+// DAY CELL (CalendarList dayComponent)
+// ---------------------------------------------
+
+function DayCell({
+    date,
+    state,
+    business,
+    blockedDatesMap,
+    selectedDate,
+    onPickDate,
+}: {
+    date?: DateData;
+    state?: string;
+    business: BusinessForBooking | null;
+    blockedDatesMap: { [dateStr: string]: boolean };
+    selectedDate: Date | null;
+    onPickDate: (dateString: string) => void;
+}) {
+    if (!date?.dateString) return <View />;
+
+    const d = new Date(date.dateString);
+    const opening = getOpeningRangeForDate(d, business);
+    const isBlockedDay = !!blockedDatesMap[date.dateString];
+    const isClosed = !opening || isBlockedDay;
+
+    const isSelected = !!selectedDate && date.dateString === dateToYMD(selectedDate);
+    const isToday = state === "today";
+
+    return (
+        <TouchableOpacity
+            onPress={() => {
+                if (isClosed) {
+                    Alert.alert(
+                        isBlockedDay ? "היום חסום (חופשה / אירוע מיוחד)" : "העסק סגור ביום זה",
+                        "בחר יום אחר מתוך הימים הפתוחים."
+                    );
+                    return;
+                }
+                onPickDate(date.dateString);
+            }}
+            activeOpacity={isClosed ? 1 : 0.6}
+        >
+            <View
+                style={[
+                    styles.dayContainer,
+                    isBlockedDay && styles.dayContainerBlocked,
+                    isSelected && styles.dayContainerSelected,
+                ]}
+            >
+                <Text
+                    style={[
+                        styles.dayText,
+                        isClosed && styles.dayTextClosed,
+                        isToday && styles.dayTextToday,
+                        isSelected && styles.dayTextSelected,
+                    ]}
+                >
+                    {date.day}
+                </Text>
+            </View>
+        </TouchableOpacity>
+    );
+}
+
 // -----------------------------------------------------------
 // MAIN COMPONENT
 // -----------------------------------------------------------
@@ -215,8 +281,7 @@ const BookAppointmentScreen = () => {
     const business = businessData as BusinessForBooking | null;
     const router = useRouter();
 
-    const clientId =
-        user?._id || (user as any)?.id || (user as any)?.userId || null;
+    const clientId = user?._id || (user as any)?.id || (user as any)?.userId || null;
 
     const [currentStep, setCurrentStep] = useState(1);
     const [selectedStaff, setSelectedStaff] = useState<Staff | null>(null);
@@ -228,11 +293,14 @@ const BookAppointmentScreen = () => {
     const [dayAppointments, setDayAppointments] = useState<Appointment[]>([]);
     const [loadingDayAppointments, setLoadingDayAppointments] = useState(false);
 
-    /** חסימות ליום שנבחר */
+    /** חסימות ליום שנבחר (עבור worker הנבחר + חסימות כלליות לעסק) */
     const [dayBlocks, setDayBlocks] = useState<Block[]>([]);
     const [loadingDayBlocks, setLoadingDayBlocks] = useState(false);
 
-    /** מפת ימים חסומים (לכל העסק) לטווח גדול יותר, כדי לצבוע ביומן */
+    /**
+     * מפת ימים חסומים לטווח (לצביעה ביומן) –
+     * חשוב: חייב להיות תלוי ב-worker הנבחר כדי לא "לזלוג" חופשות בין עובדים.
+     */
     const [blockedDatesMap, setBlockedDatesMap] = useState<{ [dateStr: string]: boolean }>({});
 
     const [submitting, setSubmitting] = useState(false);
@@ -274,22 +342,24 @@ const BookAppointmentScreen = () => {
 
     useEffect(() => {
         if (!selectedStaff && staffOptions.length === 1) setSelectedStaff(staffOptions[0]);
-    }, [staffOptions]);
+    }, [staffOptions, selectedStaff]);
+
+    /** worker בפועל שנשתמש בו לכל החישובים */
+    const selectedWorkerId = useMemo(() => {
+        return selectedStaff?.id || staffOptions[0]?.id || null;
+    }, [selectedStaff, staffOptions]);
 
     // Load appointments for selected day
     useEffect(() => {
         const load = async () => {
             if (!selectedDate || !userToken) return;
-            const workerId = selectedStaff?.id || staffOptions[0]?.id;
-            if (!workerId) return;
+            if (!selectedWorkerId) return;
 
             setLoadingDayAppointments(true);
 
             try {
                 const dateStr = dateToYMD(selectedDate);
-                const res = await apiFetch(
-                    `${API_URL}/by-day?date=${dateStr}&worker=${workerId}`
-                );
+                const res = await apiFetch(`${API_URL}/by-day?date=${dateStr}&worker=${selectedWorkerId}`);
                 setDayAppointments(res.ok ? await res.json() : []);
             } catch {
                 setDayAppointments([]);
@@ -299,22 +369,19 @@ const BookAppointmentScreen = () => {
         };
 
         load();
-    }, [selectedDate, selectedStaff, userToken, staffOptions]);
+    }, [selectedDate, selectedWorkerId, userToken]);
 
-    // Load blocks for selected day
+    // Load blocks for selected day (business-wide + selected worker)
     useEffect(() => {
         const loadBlocks = async () => {
             if (!selectedDate || !userToken) return;
-            const workerId = selectedStaff?.id || staffOptions[0]?.id;
-            if (!workerId) return;
+            if (!selectedWorkerId) return;
 
             setLoadingDayBlocks(true);
 
             try {
                 const dateStr = dateToYMD(selectedDate);
-                const res = await apiFetch(
-                    `${BLOCKS_API_URL}/by-day?date=${dateStr}&worker=${workerId}`
-                );
+                const res = await apiFetch(`${BLOCKS_API_URL}/by-day?date=${dateStr}&worker=${selectedWorkerId}`);
                 const data = res.ok ? await res.json() : [];
                 setDayBlocks(data);
             } catch {
@@ -325,12 +392,16 @@ const BookAppointmentScreen = () => {
         };
 
         loadBlocks();
-    }, [selectedDate, selectedStaff, userToken, staffOptions]);
+    }, [selectedDate, selectedWorkerId, userToken]);
 
-    // Range blocks for calendar coloring
+    // Range blocks for calendar coloring (DEPENDS ON WORKER)
     useEffect(() => {
         const loadRangeBlocks = async () => {
             if (!userToken || !business) return;
+            if (!selectedWorkerId) {
+                setBlockedDatesMap({});
+                return;
+            }
 
             try {
                 const fromDate = new Date();
@@ -340,8 +411,9 @@ const BookAppointmentScreen = () => {
                 const fromStr = dateToYMD(fromDate);
                 const toStr = dateToYMD(toDate);
 
+                // חשוב: מסננים לפי worker כדי לא להביא חופשות של עובדים אחרים
                 const res = await apiFetch(
-                    `${BLOCKS_API_URL}/list?from=${fromStr}&to=${toStr}`
+                    `${BLOCKS_API_URL}/list?from=${fromStr}&to=${toStr}&resource=${selectedWorkerId}`
                 );
 
                 if (!res.ok) {
@@ -350,16 +422,23 @@ const BookAppointmentScreen = () => {
                 }
 
                 const blocks: Block[] = await res.json();
+
                 const map: { [dateStr: string]: boolean } = {};
 
+                // מסמנים יום כחסום אם יש בלוק שמכסה את כל היום (לפי שעות פתיחה)
+                // ושייך לכל העסק (resource=null) או לעובד הנבחר
                 blocks.forEach((block) => {
-                    if (block.resource !== null) return;
+                    const isRelevant =
+                        block.resource === null || block.resource === selectedWorkerId;
+
+                    if (!isRelevant) return;
 
                     const blockStart = new Date(block.start);
                     const blockEnd = new Date(block.end);
 
                     const cur = new Date(blockStart);
                     cur.setHours(0, 0, 0, 0);
+
                     const endDay = new Date(blockEnd);
                     endDay.setHours(0, 0, 0, 0);
 
@@ -367,10 +446,14 @@ const BookAppointmentScreen = () => {
                         const ymd = dateToYMD(cur);
                         const opening = getOpeningRangeForDate(cur, business);
 
+                        // אם העסק סגור – DayCell כבר יטפל בזה (opening null),
+                        // אבל נשאיר גם כאן "חסימה" כדי לאפשר UI עקבי אם תרצה.
                         if (!opening) {
                             map[ymd] = true;
                         } else {
                             const { dayStart, dayEnd } = opening;
+
+                            // חסימה שמכסה את כל שעות הפעילות של אותו היום
                             if (blockStart <= dayStart && blockEnd >= dayEnd) {
                                 map[ymd] = true;
                             }
@@ -388,7 +471,7 @@ const BookAppointmentScreen = () => {
         };
 
         loadRangeBlocks();
-    }, [userToken, business]);
+    }, [userToken, business, selectedWorkerId]);
 
     // Available slots
     const availableSlots = useMemo(() => {
@@ -414,13 +497,8 @@ const BookAppointmentScreen = () => {
             const slotEnd = new Date(slotStart.getTime() + minutesToMs(duration));
             if (slotEnd > dayEnd) break;
 
-            const conflictWithAppt = appts.some((a) =>
-                intervalsOverlap(slotStart, slotEnd, a.start, a.end)
-            );
-
-            const conflictWithBlock = blockIntervals.some((b) =>
-                intervalsOverlap(slotStart, slotEnd, b.start, b.end)
-            );
+            const conflictWithAppt = appts.some((a) => intervalsOverlap(slotStart, slotEnd, a.start, a.end));
+            const conflictWithBlock = blockIntervals.some((b) => intervalsOverlap(slotStart, slotEnd, b.start, b.end));
 
             if (!conflictWithAppt && !conflictWithBlock) {
                 slots.push(slotStart);
@@ -454,7 +532,7 @@ const BookAppointmentScreen = () => {
         if (!clientId || !selectedService || !selectedDate || !selectedTime)
             return Alert.alert("שגיאה", "יש למלא את כל השלבים");
 
-        const workerId = selectedStaff?.id || staffOptions[0]?.id;
+        const workerId = selectedWorkerId;
         if (!workerId) return Alert.alert("שגיאה", "בחר איש צוות");
 
         setSubmitting(true);
@@ -518,52 +596,37 @@ const BookAppointmentScreen = () => {
 
             <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
                 {/* STEP 1 */}
-                <TouchableOpacity
-                    style={styles.stepRow}
-                    onPress={() => setShowStaffModal(true)}
-                >
+                <TouchableOpacity style={styles.stepRow} onPress={() => setShowStaffModal(true)}>
                     <View style={styles.stepNumberCircle}>
                         <Text style={{ color: "#fff" }}>1</Text>
                     </View>
                     <View>
                         <Text style={styles.stepLabel}>איש צוות</Text>
-                        <Text style={styles.stepValue}>
-                            {selectedStaff?.name || "בחר איש צוות"}
-                        </Text>
+                        <Text style={styles.stepValue}>{selectedStaff?.name || "בחר איש צוות"}</Text>
                     </View>
                 </TouchableOpacity>
 
                 {/* STEP 2 */}
-                <TouchableOpacity
-                    style={styles.stepRow}
-                    onPress={() => setShowServiceModal(true)}
-                >
+                <TouchableOpacity style={styles.stepRow} onPress={() => setShowServiceModal(true)}>
                     <View style={styles.stepNumberCircle}>
                         <Text style={{ color: "#fff" }}>2</Text>
                     </View>
                     <View>
                         <Text style={styles.stepLabel}>טיפול</Text>
                         <Text style={styles.stepValue}>
-                            {selectedService
-                                ? `${selectedService.name} · ${selectedService.price} ₪`
-                                : "בחר טיפול"}
+                            {selectedService ? `${selectedService.name} · ${selectedService.price} ₪` : "בחר טיפול"}
                         </Text>
                     </View>
                 </TouchableOpacity>
 
                 {/* STEP 3 */}
-                <TouchableOpacity
-                    style={styles.stepRow}
-                    onPress={() => setShowDateModal(true)}
-                >
+                <TouchableOpacity style={styles.stepRow} onPress={() => setShowDateModal(true)}>
                     <View style={styles.stepNumberCircle}>
                         <Text style={{ color: "#fff" }}>3</Text>
                     </View>
                     <View>
                         <Text style={styles.stepLabel}>יום</Text>
-                        <Text style={styles.stepValue}>
-                            {selectedDate ? formatDate(selectedDate) : "בחר יום"}
-                        </Text>
+                        <Text style={styles.stepValue}>{selectedDate ? formatDate(selectedDate) : "בחר יום"}</Text>
                     </View>
                 </TouchableOpacity>
 
@@ -578,19 +641,14 @@ const BookAppointmentScreen = () => {
                     </View>
                     <View>
                         <Text style={styles.stepLabel}>שעה</Text>
-                        <Text style={styles.stepValue}>
-                            {selectedTime ? formatTime(selectedTime) : "בחר שעה"}
-                        </Text>
+                        <Text style={styles.stepValue}>{selectedTime ? formatTime(selectedTime) : "בחר שעה"}</Text>
                     </View>
                 </TouchableOpacity>
 
                 {/* SUBMIT BOX */}
                 <View style={styles.summaryBox}>
                     <TouchableOpacity
-                        style={[
-                            styles.submitButton,
-                            (!selectedTime || submitting) && { opacity: 0.5 },
-                        ]}
+                        style={[styles.submitButton, (!selectedTime || submitting) && { opacity: 0.5 }]}
                         disabled={!selectedTime || submitting}
                         onPress={handleSubmit}
                     >
@@ -602,13 +660,8 @@ const BookAppointmentScreen = () => {
                     </TouchableOpacity>
 
                     {bookingSuccess && (
-                        <TouchableOpacity
-                            style={styles.secondaryButton}
-                            onPress={() => router.push("/torList")}
-                        >
-                            <Text style={styles.secondaryButtonText}>
-                                לעמוד התורים שלי
-                            </Text>
+                        <TouchableOpacity style={styles.secondaryButton} onPress={() => router.push("/torList")}>
+                            <Text style={styles.secondaryButtonText}>לעמוד התורים שלי</Text>
                         </TouchableOpacity>
                     )}
                 </View>
@@ -617,7 +670,7 @@ const BookAppointmentScreen = () => {
             {/* STAFF MODAL */}
             <Modal visible={showStaffModal} transparent animationType="slide">
                 <View style={styles.modalBackdrop}>
-                    <View style={styles.modalCard}>
+                    <View style={styles.modalCard2}>
                         <Text style={styles.modalTitle}>בחר איש צוות</Text>
                         {staffOptions.map((s) => (
                             <TouchableOpacity
@@ -627,6 +680,7 @@ const BookAppointmentScreen = () => {
                                     setSelectedStaff(s);
                                     setSelectedDate(null);
                                     setSelectedTime(null);
+                                    setBlockedDatesMap({}); // כדי שלא יישארו "צביעות" מהעובד הקודם עד שהטעינה תסתיים
                                     setShowStaffModal(false);
                                     setCurrentStep(2);
                                 }}
@@ -641,7 +695,7 @@ const BookAppointmentScreen = () => {
             {/* SERVICE MODAL */}
             <Modal visible={showServiceModal} transparent animationType="slide">
                 <View style={styles.modalBackdrop}>
-                    <View style={styles.modalCard}>
+                    <View style={styles.modalCard2}>
                         <Text style={styles.modalTitle}>בחר טיפול</Text>
                         {services.map((srv) => (
                             <TouchableOpacity
@@ -674,61 +728,22 @@ const BookAppointmentScreen = () => {
                         <CalendarList
                             minDate={dateToYMD(new Date())}
                             futureScrollRange={6}
-                            dayComponent={({ date, state }) => {
-                                if (!date) {
-                                    return <View />;
-                                }
-
-                                const d = new Date(date.dateString);
-                                const opening = getOpeningRangeForDate(d, business);
-                                const isBlockedDay = !!blockedDatesMap[date.dateString];
-                                const isClosed = !opening || isBlockedDay;
-                                const isSelected =
-                                    selectedDate &&
-                                    date.dateString === dateToYMD(selectedDate);
-                                const isToday = state === "today";
-
-                                return (
-                                    <TouchableOpacity
-                                        onPress={() => {
-                                            if (isClosed) {
-                                                Alert.alert(
-                                                    isBlockedDay
-                                                        ? "היום חסום (חופשה / אירוע מיוחד)"
-                                                        : "העסק סגור ביום זה",
-                                                    "בחר יום אחר מתוך הימים הפתוחים."
-                                                );
-                                                return;
-                                            }
-                                            const chosen = new Date(date.dateString);
-                                            setSelectedDate(chosen);
-                                            setSelectedTime(null);
-                                            setShowDateModal(false);
-                                            setCurrentStep(4);
-                                        }}
-                                        activeOpacity={isClosed ? 1 : 0.6}
-                                    >
-                                        <View
-                                            style={[
-                                                styles.dayContainer,
-                                                isBlockedDay && styles.dayContainerBlocked,
-                                                isSelected && styles.dayContainerSelected,
-                                            ]}
-                                        >
-                                            <Text
-                                                style={[
-                                                    styles.dayText,
-                                                    isClosed && styles.dayTextClosed,
-                                                    isToday && styles.dayTextToday,
-                                                    isSelected && styles.dayTextSelected,
-                                                ]}
-                                            >
-                                                {date.day}
-                                            </Text>
-                                        </View>
-                                    </TouchableOpacity>
-                                );
-                            }}
+                            dayComponent={(props: any) => (
+                                <DayCell
+                                    date={props?.date as DateData | undefined}
+                                    state={props?.state as string | undefined}
+                                    business={business}
+                                    blockedDatesMap={blockedDatesMap}
+                                    selectedDate={selectedDate}
+                                    onPickDate={(dateString) => {
+                                        const chosen = new Date(dateString);
+                                        setSelectedDate(chosen);
+                                        setSelectedTime(null);
+                                        setShowDateModal(false);
+                                        setCurrentStep(4);
+                                    }}
+                                />
+                            )}
                         />
                     </View>
                 </View>
@@ -745,8 +760,7 @@ const BookAppointmentScreen = () => {
                         ) : availableSlots.length === 0 ? (
                             <>
                                 <Text style={styles.emptyText}>
-                                    אין שעות פנויות ביום זה. ייתכן שכל היום תפוס,
-                                    שהעסק סגור, או שקיימת חסימה (חופשה / יום מיוחד).
+                                    אין שעות פנויות ביום זה. ייתכן שכל היום תפוס, שהעסק סגור, או שקיימת חסימה (חופשה / יום מיוחד).
                                 </Text>
                                 <TouchableOpacity
                                     style={styles.backButton}
@@ -755,9 +769,7 @@ const BookAppointmentScreen = () => {
                                         setShowDateModal(true);
                                     }}
                                 >
-                                    <Text style={styles.backButtonText}>
-                                        חזרה לבחירת יום
-                                    </Text>
+                                    <Text style={styles.backButtonText}>חזרה לבחירת יום</Text>
                                 </TouchableOpacity>
                             </>
                         ) : (
@@ -772,9 +784,7 @@ const BookAppointmentScreen = () => {
                                             setCurrentStep(5);
                                         }}
                                     >
-                                        <Text style={styles.slotText}>
-                                            {formatTime(slot)}
-                                        </Text>
+                                        <Text style={styles.slotText}>{formatTime(slot)}</Text>
                                     </TouchableOpacity>
                                 ))}
                             </ScrollView>
@@ -898,6 +908,14 @@ const styles = StyleSheet.create({
     modalCard: {
         backgroundColor: "#fff",
         padding: 20,
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        maxHeight: "80%",
+    },
+    modalCard2: {
+        backgroundColor: "#fff",
+        padding: 20,
+        paddingBottom: 50,
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
         maxHeight: "80%",

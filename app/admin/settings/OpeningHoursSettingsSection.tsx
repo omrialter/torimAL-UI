@@ -2,7 +2,7 @@
 import { useAuth } from "@/contexts/AuthContext";
 import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
 import { URL } from "@/services/api";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -25,6 +25,8 @@ const DAY_LABELS: { key: string; label: string }[] = [
     { key: "saturday", label: "שבת" },
 ];
 
+
+//כאן אפשר לסגור    גגג
 // ----- BLOCKS -----
 type BlockReason = "vacation" | "maintenance" | "training" | "other";
 type BlockMode = "single" | "range";
@@ -40,38 +42,32 @@ const BLOCK_REASONS: { key: BlockReason; label: string }[] = [
 type Block = {
     _id: string;
     business: string;
-    resource: string | null;
-    start: string; // ISO
-    end: string;   // ISO
+    resource: string | null; // null = כל העסק, אחרת = עובד
+    start: string;
+    end: string;
     timezone?: string;
     reason?: BlockReason;
     notes?: string | null;
     active?: boolean;
 };
 
-// יום סגור = אין שעת פתיחה *וגם* אין שעת סגירה (null או ריק)
+type WorkerOption = { id: string; name: string };
+
 const isDayClosed = (day: any) => !day || (!day.open && !day.close);
 
-// מנרמל לפני שליחה לשרת – ריק => null, ואם חסר אחד הצדדים נחשב סגור
 const normalizeOpeningHoursForSave = (openingHours: any) => {
     const clean: any = {};
-
     DAY_LABELS.forEach(({ key }) => {
         const day = openingHours?.[key] || {};
         const open = (day.open || "").trim();
         const close = (day.close || "").trim();
 
-        if (!open || !close) {
-            clean[key] = { open: null, close: null };
-        } else {
-            clean[key] = { open, close };
-        }
+        if (!open || !close) clean[key] = { open: null, close: null };
+        else clean[key] = { open, close };
     });
-
     return clean;
 };
 
-// helper לתאריך בפורמט YYYY-MM-DD
 const dateToYMD = (d: Date) => {
     const yyyy = d.getFullYear();
     const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -79,7 +75,6 @@ const dateToYMD = (d: Date) => {
     return `${yyyy}-${mm}-${dd}`;
 };
 
-// תצוגה יפה של תאריך בעברית
 const formatDateHe = (d: Date) =>
     d.toLocaleDateString("he-IL", {
         weekday: "long",
@@ -95,7 +90,6 @@ const formatTimeHe = (d: Date) =>
         hour12: false,
     });
 
-// ניסיון לקחת timezone מהמכשיר, ברירת מחדל לארץ
 const getDeviceTimezone = () => {
     try {
         // @ts-ignore
@@ -119,13 +113,29 @@ export default function OpeningHoursSettingsSection() {
         third: colors?.third ?? "#0b1120",
     };
 
-    const [openingHours, setOpeningHours] = useState<any>(
-        business.openingHours || {}
-    );
+    const [openingHours, setOpeningHours] = useState<any>(business.openingHours || {});
     const [savingOpeningHours, setSavingOpeningHours] = useState(false);
 
     // ---- state לטופס חסימה ----
     const [blockMode, setBlockMode] = useState<BlockMode>("single");
+
+    // חדש: בחירת עובד לחסימה
+    const workerOptions: WorkerOption[] = useMemo(() => {
+        const arr: WorkerOption[] = [];
+        if (business?.workers?.length) {
+            business.workers.forEach((w: any) => {
+                arr.push({ id: w._id, name: w.name || w.fullName || "עובד" });
+            });
+        }
+        if (business?.owner?._id) {
+            const exists = arr.some((x) => x.id === business.owner._id);
+            if (!exists) arr.unshift({ id: business.owner._id, name: business.owner.name || "בעל העסק" });
+        }
+        return arr;
+    }, [business]);
+
+    // null = כל העסק, אחרת workerId
+    const [selectedBlockResource, setSelectedBlockResource] = useState<string | null>(null);
 
     // מצב יום אחד:
     const [blockDate, setBlockDate] = useState(""); // YYYY-MM-DD
@@ -136,20 +146,15 @@ export default function OpeningHoursSettingsSection() {
 
     const [blockStartTime, setBlockStartTime] = useState(""); // HH:MM
     const [blockEndTime, setBlockEndTime] = useState(""); // HH:MM
-    const [blockTimePreset, setBlockTimePreset] =
-        useState<BlockTimePreset>("all_day");
+    const [blockTimePreset, setBlockTimePreset] = useState<BlockTimePreset>("all_day");
 
     const [blockReason, setBlockReason] = useState<BlockReason>("vacation");
     const [blockNotes, setBlockNotes] = useState("");
     const [savingBlock, setSavingBlock] = useState(false);
 
-    // מודאל בחירת תאריך + איזה שדה פעיל
     const [showBlockDateModal, setShowBlockDateModal] = useState(false);
-    const [activeDateField, setActiveDateField] = useState<
-        "single" | "start" | "end"
-    >("single");
+    const [activeDateField, setActiveDateField] = useState<"single" | "start" | "end">("single");
 
-    // ----- רשימת חסימות קיימות -----
     const [blocks, setBlocks] = useState<Block[]>([]);
     const [loadingBlocks, setLoadingBlocks] = useState(false);
     const [deletingBlockId, setDeletingBlockId] = useState<string | null>(null);
@@ -158,7 +163,6 @@ export default function OpeningHoursSettingsSection() {
         setOpeningHours(business.openingHours || {});
     }, [business.openingHours]);
 
-    // ברירת מחדל – חסימה ליום שלם
     useEffect(() => {
         applyTimePreset("all_day");
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -172,27 +176,14 @@ export default function OpeningHoursSettingsSection() {
 
             const res = await fetch(`${URL}/blocks/list`, {
                 method: "GET",
-                headers: {
-                    "x-api-key": userToken || "",
-                },
+                headers: { "x-api-key": userToken || "" },
             });
 
             const text = await res.text();
-            console.log(
-                "📥 blocks list response:",
-                res.status,
-                text.substring(0, 500)
-            );
-
-            if (!res.ok) {
-                return;
-            }
+            if (!res.ok) return;
 
             const data: Block[] = JSON.parse(text);
-            // נוודא שמביאים רק חסימות פעילות (בכל מקרה השרת כבר מסנן כברירת מחדל)
-            const activeBlocks = data.filter(
-                (b) => b.active !== false
-            );
+            const activeBlocks = data.filter((b) => b.active !== false);
             setBlocks(activeBlocks);
         } catch (err) {
             console.log("blocks list error:", err);
@@ -205,15 +196,9 @@ export default function OpeningHoursSettingsSection() {
         fetchBlocks();
     }, [fetchBlocks]);
 
-    if (!businessId) {
-        return null;
-    }
+    if (!businessId) return null;
 
-    const handleOpeningHourChange = (
-        dayKey: string,
-        field: "open" | "close",
-        value: string
-    ) => {
+    const handleOpeningHourChange = (dayKey: string, field: "open" | "close", value: string) => {
         setOpeningHours((prev: any) => ({
             ...prev,
             [dayKey]: {
@@ -223,7 +208,6 @@ export default function OpeningHoursSettingsSection() {
         }));
     };
 
-    // טוגל: אם היום פתוח -> נסגור, אם סגור -> נפתח (עם שעות ברירת מחדל שאפשר לערוך)
     const handleToggleDayClosed = (dayKey: string) => {
         setOpeningHours((prev: any) => {
             const current = prev?.[dayKey];
@@ -232,45 +216,29 @@ export default function OpeningHoursSettingsSection() {
             if (closed) {
                 return {
                     ...prev,
-                    [dayKey]: {
-                        open: current?.open || "09:00",
-                        close: current?.close || "17:00",
-                    },
+                    [dayKey]: { open: current?.open || "09:00", close: current?.close || "17:00" },
                 };
             }
 
-            return {
-                ...prev,
-                [dayKey]: { open: null, close: null },
-            };
+            return { ...prev, [dayKey]: { open: null, close: null } };
         });
     };
 
     const handleSaveOpeningHours = async () => {
         try {
             setSavingOpeningHours(true);
-
             const normalized = normalizeOpeningHoursForSave(openingHours);
 
-            const res = await fetch(
-                `${URL}/businesses/${businessId}/opening-hours`,
-                {
-                    method: "PATCH",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "x-api-key": userToken || "",
-                    },
-                    body: JSON.stringify({ openingHours: normalized }),
-                }
-            );
+            const res = await fetch(`${URL}/businesses/${businessId}/opening-hours`, {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/json",
+                    "x-api-key": userToken || "",
+                },
+                body: JSON.stringify({ openingHours: normalized }),
+            });
 
             const rawText = await res.text();
-            console.log(
-                "📥 save openingHours response:",
-                res.status,
-                rawText.substring(0, 500)
-            );
-
             if (!res.ok) {
                 console.log("save openingHours error:", rawText);
                 Alert.alert("שגיאה", "לא ניתן לשמור שעות פתיחה כרגע.");
@@ -287,10 +255,8 @@ export default function OpeningHoursSettingsSection() {
         }
     };
 
-    // -------- פריסטים לשעות חסימה --------
     function applyTimePreset(preset: BlockTimePreset) {
         setBlockTimePreset(preset);
-
         switch (preset) {
             case "all_day":
                 setBlockStartTime("00:00");
@@ -305,7 +271,6 @@ export default function OpeningHoursSettingsSection() {
                 setBlockEndTime("17:00");
                 break;
             case "custom":
-                // לא נוגעים בשעות – המשתמש יגדיר
                 break;
         }
     }
@@ -324,30 +289,19 @@ export default function OpeningHoursSettingsSection() {
         }
     })();
 
-    // ---- יצירת חסימה ביומן (יום אחד / טווח ימים) ----
     const handleCreateBlock = async () => {
-        // בדיקות לפי מצב
         if (blockMode === "single") {
             if (!blockDate || !blockStartTime || !blockEndTime) {
                 Alert.alert("חסר מידע", "נא לבחור תאריך, שעת התחלה ושעת סיום.");
                 return;
             }
         } else {
-            if (
-                !blockStartDate ||
-                !blockEndDate ||
-                !blockStartTime ||
-                !blockEndTime
-            ) {
-                Alert.alert(
-                    "חסר מידע",
-                    "נא לבחור תאריכי התחלה/סיום ושעות תחילה/סיום."
-                );
+            if (!blockStartDate || !blockEndDate || !blockStartTime || !blockEndTime) {
+                Alert.alert("חסר מידע", "נא לבחור תאריכי התחלה/סיום ושעות תחילה/סיום.");
                 return;
             }
         }
 
-        // בניית start ו-end
         let start: Date;
         let end: Date;
 
@@ -363,12 +317,8 @@ export default function OpeningHoursSettingsSection() {
             Alert.alert("שגיאה", "פורמט תאריך/שעה לא תקין.");
             return;
         }
-
         if (end <= start) {
-            Alert.alert(
-                "שגיאה",
-                "שעת הסיום (ותאריך הסיום) חייבים להיות אחרי שעת/תאריך ההתחלה."
-            );
+            Alert.alert("שגיאה", "שעת הסיום (ותאריך הסיום) חייבים להיות אחרי שעת/תאריך ההתחלה.");
             return;
         }
 
@@ -376,8 +326,8 @@ export default function OpeningHoursSettingsSection() {
             setSavingBlock(true);
 
             const payload = {
-                // business מגיע מה-token בשרת
-                resource: null, // חסימה לכל העסק
+                // שינוי חשוב: resource נקבע לפי הבחירה (null = כל העסק, אחרת עובד)
+                resource: selectedBlockResource,
                 start: start.toISOString(),
                 end: end.toISOString(),
                 timezone: getDeviceTimezone(),
@@ -395,21 +345,15 @@ export default function OpeningHoursSettingsSection() {
             });
 
             const text = await res.text();
-            console.log("📥 create block response:", res.status, text);
-
             if (!res.ok) {
+                console.log("create block response:", res.status, text);
                 Alert.alert("שגיאה", "לא ניתן ליצור חסימה ביומן כרגע.");
                 return;
             }
 
-            Alert.alert(
-                "הצלחה",
-                blockMode === "single"
-                    ? "נוספה חסימה ליום שנבחר."
-                    : "נוספה חסימה לטווח התאריכים שנבחר."
-            );
+            Alert.alert("הצלחה", blockMode === "single" ? "נוספה חסימה ליום שנבחר." : "נוספה חסימה לטווח התאריכים שנבחר.");
 
-            // איפוס טופס
+            // Reset form
             setBlockDate("");
             setBlockStartDate("");
             setBlockEndDate("");
@@ -418,11 +362,9 @@ export default function OpeningHoursSettingsSection() {
             setBlockTimePreset("all_day");
             setBlockReason("vacation");
             setBlockNotes("");
-
-            // להחזיר שוב ליום שלם כברירת מחדל
+            setSelectedBlockResource(null);
             applyTimePreset("all_day");
 
-            // ריענון רשימת החסימות
             fetchBlocks();
         } catch (err) {
             console.log("create block error:", err);
@@ -433,69 +375,42 @@ export default function OpeningHoursSettingsSection() {
     };
 
     const handleDeleteBlock = (blockId: string) => {
-        Alert.alert(
-            "מחיקת חסימה",
-            "האם אתה בטוח שברצונך למחוק את החסימה הזו?",
-            [
-                { text: "ביטול", style: "cancel" },
-                {
-                    text: "מחיקה",
-                    style: "destructive",
-                    onPress: async () => {
-                        try {
-                            setDeletingBlockId(blockId);
+        Alert.alert("מחיקת חסימה", "האם אתה בטוח שברצונך למחוק את החסימה הזו?", [
+            { text: "ביטול", style: "cancel" },
+            {
+                text: "מחיקה",
+                style: "destructive",
+                onPress: async () => {
+                    try {
+                        setDeletingBlockId(blockId);
 
-                            const res = await fetch(`${URL}/blocks/${blockId}`, {
-                                method: "DELETE",
-                                headers: {
-                                    "x-api-key": userToken || "",
-                                },
-                            });
+                        const res = await fetch(`${URL}/blocks/${blockId}`, {
+                            method: "DELETE",
+                            headers: { "x-api-key": userToken || "" },
+                        });
 
-                            const text = await res.text();
-                            console.log(
-                                "🗑 delete block response:",
-                                res.status,
-                                text
-                            );
-
-                            if (!res.ok) {
-                                Alert.alert(
-                                    "שגיאה",
-                                    "לא ניתן למחוק את החסימה כרגע."
-                                );
-                                return;
-                            }
-
-                            // מסירים מהסטייט בלי לחכות ל-fetch נוסף
-                            setBlocks((prev) =>
-                                prev.filter((b) => b._id !== blockId)
-                            );
-                        } catch (err) {
-                            console.log("delete block error:", err);
-                            Alert.alert(
-                                "שגיאה",
-                                "אירעה תקלה במחיקת החסימה."
-                            );
-                        } finally {
-                            setDeletingBlockId(null);
+                        const text = await res.text();
+                        if (!res.ok) {
+                            console.log("delete block response:", res.status, text);
+                            Alert.alert("שגיאה", "לא ניתן למחוק את החסימה כרגע.");
+                            return;
                         }
-                    },
+
+                        setBlocks((prev) => prev.filter((b) => b._id !== blockId));
+                    } catch (err) {
+                        console.log("delete block error:", err);
+                        Alert.alert("שגיאה", "אירעה תקלה במחיקת החסימה.");
+                    } finally {
+                        setDeletingBlockId(null);
+                    }
                 },
-            ]
-        );
+            },
+        ]);
     };
 
-    // טקסטים יפים לכפתורי תאריכים
-    const blockDateLabel = blockDate
-        ? formatDateHe(new Date(blockDate))
-        : "בחר תאריך";
-    const blockStartDateLabel = blockStartDate
-        ? formatDateHe(new Date(blockStartDate))
-        : "מתאריך";
-    const blockEndDateLabel = blockEndDate
-        ? formatDateHe(new Date(blockEndDate))
-        : "עד תאריך";
+    const blockDateLabel = blockDate ? formatDateHe(new Date(blockDate)) : "בחר תאריך";
+    const blockStartDateLabel = blockStartDate ? formatDateHe(new Date(blockStartDate)) : "מתאריך";
+    const blockEndDateLabel = blockEndDate ? formatDateHe(new Date(blockEndDate)) : "עד תאריך";
 
     const timeInputsDisabled = blockTimePreset !== "custom";
 
@@ -504,37 +419,32 @@ export default function OpeningHoursSettingsSection() {
         const end = new Date(block.end);
         const sameDay = dateToYMD(start) === dateToYMD(end);
 
-        if (sameDay) {
-            return `${formatDateHe(start)} · ${formatTimeHe(
-                start
-            )}–${formatTimeHe(end)}`;
-        }
+        if (sameDay) return `${formatDateHe(start)} · ${formatTimeHe(start)}–${formatTimeHe(end)}`;
         return `${formatDateHe(start)} – ${formatDateHe(end)}`;
     };
 
     const getReasonLabel = (reason?: BlockReason) => {
         if (!reason) return "חסימה ביומן";
-        return (
-            BLOCK_REASONS.find((r) => r.key === reason)?.label ||
-            "חסימה ביומן"
-        );
+        return BLOCK_REASONS.find((r) => r.key === reason)?.label || "חסימה ביומן";
+    };
+
+    const getResourceLabel = (resource: string | null) => {
+        if (!resource) return "כל העסק";
+        const w = workerOptions.find((x) => x.id === resource);
+        return w?.name || "עובד";
     };
 
     return (
         <View style={styles.card}>
             <Text style={styles.cardTitle}>שעות פתיחה</Text>
             <Text style={styles.cardSubtitleHighlight}>
-                רוצה לצאת לחופשה? לסגור חצי יום לטובת פגישת עסקים? בתחתית
-                העמוד אפשר להוסיף חסימה ביומן (ליום אחד או לטווח של כמה ימים).
+                רוצה לצאת לחופשה? לסגור חצי יום לטובת פגישת עסקים? בתחתית העמוד אפשר להוסיף חסימה ביומן (ליום אחד או לטווח של כמה ימים).
             </Text>
 
             {/* ==== טבלת שעות פתיחה ==== */}
             <View style={{ marginTop: 8, gap: 8 }}>
                 {DAY_LABELS.map(({ key, label }) => {
-                    const dayObj = openingHours?.[key] || {
-                        open: "",
-                        close: "",
-                    };
+                    const dayObj = openingHours?.[key] || { open: "", close: "" };
                     const closed = isDayClosed(dayObj);
 
                     return (
@@ -543,64 +453,33 @@ export default function OpeningHoursSettingsSection() {
 
                             <View style={styles.openingInputs}>
                                 <View style={{ flex: 1 }}>
-                                    <Text style={styles.cardSubtitle}>
-                                        פתיחה
-                                    </Text>
+                                    <Text style={styles.cardSubtitle}>פתיחה</Text>
                                     <TextInput
                                         value={dayObj.open ?? ""}
-                                        onChangeText={(val) =>
-                                            handleOpeningHourChange(
-                                                key,
-                                                "open",
-                                                val
-                                            )
-                                        }
+                                        onChangeText={(val) => handleOpeningHourChange(key, "open", val)}
                                         placeholder="09:00"
-                                        style={[
-                                            styles.inputSmall,
-                                            closed && { opacity: 0.5 },
-                                        ]}
+                                        style={[styles.inputSmall, closed && { opacity: 0.5 }]}
                                         editable={!closed}
                                     />
                                 </View>
 
                                 <View style={{ flex: 1 }}>
-                                    <Text style={styles.cardSubtitle}>
-                                        סגירה
-                                    </Text>
+                                    <Text style={styles.cardSubtitle}>סגירה</Text>
                                     <TextInput
                                         value={dayObj.close ?? ""}
-                                        onChangeText={(val) =>
-                                            handleOpeningHourChange(
-                                                key,
-                                                "close",
-                                                val
-                                            )
-                                        }
+                                        onChangeText={(val) => handleOpeningHourChange(key, "close", val)}
                                         placeholder="17:00"
-                                        style={[
-                                            styles.inputSmall,
-                                            closed && { opacity: 0.5 },
-                                        ]}
+                                        style={[styles.inputSmall, closed && { opacity: 0.5 }]}
                                         editable={!closed}
                                     />
                                 </View>
                             </View>
 
                             <TouchableOpacity
-                                style={[
-                                    styles.closeDayButton,
-                                    closed && styles.closeDayButtonActive,
-                                ]}
+                                style={[styles.closeDayButton, closed && styles.closeDayButtonActive]}
                                 onPress={() => handleToggleDayClosed(key)}
                             >
-                                <Text
-                                    style={[
-                                        styles.closeDayButtonText,
-                                        closed &&
-                                        styles.closeDayButtonTextActive,
-                                    ]}
-                                >
+                                <Text style={[styles.closeDayButtonText, closed && styles.closeDayButtonTextActive]}>
                                     {closed ? "יום סגור" : "סגור יום"}
                                 </Text>
                             </TouchableOpacity>
@@ -610,71 +489,63 @@ export default function OpeningHoursSettingsSection() {
             </View>
 
             <TouchableOpacity
-                style={[
-                    styles.actionButton,
-                    { backgroundColor: colorsSafe.primary, marginTop: 12 },
-                ]}
+                style={[styles.actionButton, { backgroundColor: colorsSafe.primary, marginTop: 12 }]}
                 onPress={handleSaveOpeningHours}
                 disabled={savingOpeningHours}
             >
-                {savingOpeningHours ? (
-                    <ActivityIndicator color="#fff" />
-                ) : (
-                    <Text style={styles.actionButtonText}>
-                        שמירת שעות פתיחה
-                    </Text>
-                )}
+                {savingOpeningHours ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionButtonText}>שמירת שעות פתיחה</Text>}
             </TouchableOpacity>
 
             {/* ==== חסימות ביומן ==== */}
             <View style={styles.blockSection}>
                 <Text style={styles.blockTitle}>חסימות ביומן</Text>
                 <Text style={styles.cardSubtitle}>
-                    כאן אפשר לסגור את היומן ליום/חצי יום או לטווח של כמה ימים
-                    לטובת חופשה, פגישות או תחזוקה.
+                    כאן אפשר לסגור את היומן ליום/חצי יום או לטווח של כמה ימים לטובת חופשה, פגישות או תחזוקה.
                 </Text>
+
+                {/* חדש: בחירת עובד / כל העסק */}
+                <Text style={[styles.cardSubtitle, { marginTop: 8 }]}>החסימה תחול על</Text>
+                <View style={styles.resourceRow}>
+                    <TouchableOpacity
+                        style={[styles.resourceChip, selectedBlockResource === null && styles.resourceChipActive]}
+                        onPress={() => setSelectedBlockResource(null)}
+                    >
+                        <Text style={[styles.resourceChipText, selectedBlockResource === null && styles.resourceChipTextActive]}>
+                            כל העסק
+                        </Text>
+                    </TouchableOpacity>
+
+                    {workerOptions.map((w) => (
+                        <TouchableOpacity
+                            key={w.id}
+                            style={[styles.resourceChip, selectedBlockResource === w.id && styles.resourceChipActive]}
+                            onPress={() => setSelectedBlockResource(w.id)}
+                        >
+                            <Text style={[styles.resourceChipText, selectedBlockResource === w.id && styles.resourceChipTextActive]}>
+                                {w.name}
+                            </Text>
+                        </TouchableOpacity>
+                    ))}
+                </View>
 
                 {/* מצב חסימה: יום אחד / טווח ימים */}
                 <View style={styles.modeRow}>
                     <TouchableOpacity
-                        style={[
-                            styles.modeChip,
-                            blockMode === "single" && styles.modeChipActive,
-                        ]}
+                        style={[styles.modeChip, blockMode === "single" && styles.modeChipActive]}
                         onPress={() => setBlockMode("single")}
                     >
-                        <Text
-                            style={[
-                                styles.modeChipText,
-                                blockMode === "single" &&
-                                styles.modeChipTextActive,
-                            ]}
-                        >
-                            חסימה ליום אחד
-                        </Text>
+                        <Text style={[styles.modeChipText, blockMode === "single" && styles.modeChipTextActive]}>חסימה ליום אחד</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                        style={[
-                            styles.modeChip,
-                            blockMode === "range" && styles.modeChipActive,
-                        ]}
+                        style={[styles.modeChip, blockMode === "range" && styles.modeChipActive]}
                         onPress={() => setBlockMode("range")}
                     >
-                        <Text
-                            style={[
-                                styles.modeChipText,
-                                blockMode === "range" &&
-                                styles.modeChipTextActive,
-                            ]}
-                        >
-                            חסימה לטווח ימים
-                        </Text>
+                        <Text style={[styles.modeChipText, blockMode === "range" && styles.modeChipTextActive]}>חסימה לטווח ימים</Text>
                     </TouchableOpacity>
                 </View>
 
                 {blockMode === "single" ? (
-                    // ===== מצב יום אחד =====
                     <View style={styles.blockRow}>
                         <View style={{ flex: 1 }}>
                             <Text style={styles.cardSubtitle}>תאריך</Text>
@@ -685,39 +556,17 @@ export default function OpeningHoursSettingsSection() {
                                     setShowBlockDateModal(true);
                                 }}
                             >
-                                <Text style={styles.datePickerButtonText}>
-                                    {blockDateLabel}
-                                </Text>
+                                <Text style={styles.datePickerButtonText}>{blockDateLabel}</Text>
                             </TouchableOpacity>
-                            <Text style={styles.datePickerHint}>
-                                בחר תאריך בודד לחסימה.
-                            </Text>
+                            <Text style={styles.datePickerHint}>בחר תאריך בודד לחסימה.</Text>
                         </View>
                     </View>
                 ) : (
-                    // ===== מצב טווח ימים =====
                     <>
                         <View style={styles.blockRow}>
+
                             <View style={{ flex: 1 }}>
-                                <Text style={styles.cardSubtitle}>
-                                    מתאריך
-                                </Text>
-                                <TouchableOpacity
-                                    style={styles.datePickerButton}
-                                    onPress={() => {
-                                        setActiveDateField("start");
-                                        setShowBlockDateModal(true);
-                                    }}
-                                >
-                                    <Text style={styles.datePickerButtonText}>
-                                        {blockStartDateLabel}
-                                    </Text>
-                                </TouchableOpacity>
-                            </View>
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.cardSubtitle}>
-                                    עד תאריך
-                                </Text>
+                                <Text style={styles.cardSubtitle}>עד תאריך</Text>
                                 <TouchableOpacity
                                     style={styles.datePickerButton}
                                     onPress={() => {
@@ -725,103 +574,61 @@ export default function OpeningHoursSettingsSection() {
                                         setShowBlockDateModal(true);
                                     }}
                                 >
-                                    <Text style={styles.datePickerButtonText}>
-                                        {blockEndDateLabel}
-                                    </Text>
+                                    <Text style={styles.datePickerButtonText}>{blockEndDateLabel}</Text>
+                                </TouchableOpacity>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.cardSubtitle}>מתאריך</Text>
+                                <TouchableOpacity
+                                    style={styles.datePickerButton}
+                                    onPress={() => {
+                                        setActiveDateField("start");
+                                        setShowBlockDateModal(true);
+                                    }}
+                                >
+                                    <Text style={styles.datePickerButtonText}>{blockStartDateLabel}</Text>
                                 </TouchableOpacity>
                             </View>
                         </View>
-                        <Text style={styles.datePickerHint}>
-                            לדוגמה: חופשה מ־01.08 עד 07.08.
-                        </Text>
+                        <Text style={styles.datePickerHint}>לדוגמה: חופשה מ־01.08 עד 07.08.</Text>
                     </>
                 )}
 
-                {/* ===== פריסטים לשעות ===== */}
-                <Text style={[styles.cardSubtitle, { marginTop: 10 }]}>
-                    שעות חסימה
-                </Text>
+                {/* פריסטים לשעות */}
+                <Text style={[styles.cardSubtitle, { marginTop: 10 }]}>שעות חסימה</Text>
                 <View style={styles.timePresetRow}>
                     <TouchableOpacity
-                        style={[
-                            styles.timePresetChip,
-                            blockTimePreset === "all_day" &&
-                            styles.timePresetChipActive,
-                        ]}
+                        style={[styles.timePresetChip, blockTimePreset === "all_day" && styles.timePresetChipActive]}
                         onPress={() => applyTimePreset("all_day")}
                     >
-                        <Text
-                            style={[
-                                styles.timePresetText,
-                                blockTimePreset === "all_day" &&
-                                styles.timePresetTextActive,
-                            ]}
-                        >
-                            יום שלם
-                        </Text>
+                        <Text style={[styles.timePresetText, blockTimePreset === "all_day" && styles.timePresetTextActive]}>יום שלם</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                        style={[
-                            styles.timePresetChip,
-                            blockTimePreset === "morning" &&
-                            styles.timePresetChipActive,
-                        ]}
+                        style={[styles.timePresetChip, blockTimePreset === "morning" && styles.timePresetChipActive]}
                         onPress={() => applyTimePreset("morning")}
                     >
-                        <Text
-                            style={[
-                                styles.timePresetText,
-                                blockTimePreset === "morning" &&
-                                styles.timePresetTextActive,
-                            ]}
-                        >
-                            בוקר
-                        </Text>
+                        <Text style={[styles.timePresetText, blockTimePreset === "morning" && styles.timePresetTextActive]}>בוקר</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                        style={[
-                            styles.timePresetChip,
-                            blockTimePreset === "afternoon" &&
-                            styles.timePresetChipActive,
-                        ]}
+                        style={[styles.timePresetChip, blockTimePreset === "afternoon" && styles.timePresetChipActive]}
                         onPress={() => applyTimePreset("afternoon")}
                     >
-                        <Text
-                            style={[
-                                styles.timePresetText,
-                                blockTimePreset === "afternoon" &&
-                                styles.timePresetTextActive,
-                            ]}
-                        >
-                            אחה"צ
-                        </Text>
+                        <Text style={[styles.timePresetText, blockTimePreset === "afternoon" && styles.timePresetTextActive]}>אחה"צ</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                        style={[
-                            styles.timePresetChip,
-                            blockTimePreset === "custom" &&
-                            styles.timePresetChipActive,
-                        ]}
+                        style={[styles.timePresetChip, blockTimePreset === "custom" && styles.timePresetChipActive]}
                         onPress={() => applyTimePreset("custom")}
                     >
-                        <Text
-                            style={[
-                                styles.timePresetText,
-                                blockTimePreset === "custom" &&
-                                styles.timePresetTextActive,
-                            ]}
-                        >
-                            מותאם אישית
-                        </Text>
+                        <Text style={[styles.timePresetText, blockTimePreset === "custom" && styles.timePresetTextActive]}>מותאם אישית</Text>
                     </TouchableOpacity>
                 </View>
 
                 <Text style={styles.datePickerHint}>{timePresetDescription}</Text>
 
-                {/* אינפוטים לשעה (ננעלים לפי פריסט) */}
+                {/* אינפוטים לשעה */}
                 <View style={styles.blockRow}>
                     <View style={{ flex: 1 }}>
                         <Text style={styles.cardSubtitle}>שעת התחלה</Text>
@@ -829,10 +636,7 @@ export default function OpeningHoursSettingsSection() {
                             value={blockStartTime}
                             onChangeText={setBlockStartTime}
                             placeholder="09:00"
-                            style={[
-                                styles.inputSmall,
-                                timeInputsDisabled && { opacity: 0.5 },
-                            ]}
+                            style={[styles.inputSmall, timeInputsDisabled && { opacity: 0.5 }]}
                             editable={!timeInputsDisabled}
                         />
                     </View>
@@ -842,10 +646,7 @@ export default function OpeningHoursSettingsSection() {
                             value={blockEndTime}
                             onChangeText={setBlockEndTime}
                             placeholder="13:00"
-                            style={[
-                                styles.inputSmall,
-                                timeInputsDisabled && { opacity: 0.5 },
-                            ]}
+                            style={[styles.inputSmall, timeInputsDisabled && { opacity: 0.5 }]}
                             editable={!timeInputsDisabled}
                         />
                     </View>
@@ -858,20 +659,10 @@ export default function OpeningHoursSettingsSection() {
                         return (
                             <TouchableOpacity
                                 key={r.key}
-                                style={[
-                                    styles.reasonChip,
-                                    active && styles.reasonChipActive,
-                                ]}
+                                style={[styles.reasonChip, active && styles.reasonChipActive]}
                                 onPress={() => setBlockReason(r.key)}
                             >
-                                <Text
-                                    style={[
-                                        styles.reasonChipText,
-                                        active && styles.reasonChipTextActive,
-                                    ]}
-                                >
-                                    {r.label}
-                                </Text>
+                                <Text style={[styles.reasonChipText, active && styles.reasonChipTextActive]}>{r.label}</Text>
                             </TouchableOpacity>
                         );
                     })}
@@ -887,78 +678,41 @@ export default function OpeningHoursSettingsSection() {
                 />
 
                 <TouchableOpacity
-                    style={[
-                        styles.actionButton,
-                        {
-                            backgroundColor: colorsSafe.third,
-                            marginTop: 10,
-                        },
-                    ]}
+                    style={[styles.actionButton, { backgroundColor: colorsSafe.third, marginTop: 10 }]}
                     onPress={handleCreateBlock}
                     disabled={savingBlock}
                 >
-                    {savingBlock ? (
-                        <ActivityIndicator color="#fff" />
-                    ) : (
-                        <Text style={styles.actionButtonText}>
-                            הוספת חסימה ביומן
-                        </Text>
-                    )}
+                    {savingBlock ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionButtonText}>הוספת חסימה ביומן</Text>}
                 </TouchableOpacity>
 
-                {/* ===== רשימת חסימות קיימות ===== */}
+                {/* רשימת חסימות */}
                 <View style={styles.blockListContainer}>
-                    <Text style={styles.blockListTitle}>
-                        חסימות פעילות
-                    </Text>
+                    <Text style={styles.blockListTitle}>חסימות פעילות</Text>
 
                     {loadingBlocks ? (
                         <ActivityIndicator style={{ marginTop: 8 }} />
                     ) : blocks.length === 0 ? (
-                        <Text style={styles.blockEmptyText}>
-                            אין חסימות פעילות כרגע.
-                        </Text>
+                        <Text style={styles.blockEmptyText}>אין חסימות פעילות כרגע.</Text>
                     ) : (
                         blocks.map((block) => (
-                            <View
-                                key={block._id}
-                                style={styles.blockItem}
-                            >
+                            <View key={block._id} style={styles.blockItem}>
                                 <View style={{ flex: 1 }}>
-                                    <Text style={styles.blockItemTitle}>
-                                        {formatBlockRange(block)}
-                                    </Text>
+                                    <Text style={styles.blockItemTitle}>{formatBlockRange(block)}</Text>
                                     <Text style={styles.blockItemSubtitle}>
-                                        {getReasonLabel(block.reason)}
-                                        {block.notes
-                                            ? ` · ${block.notes}`
-                                            : ""}
+                                        {getReasonLabel(block.reason)} · {getResourceLabel(block.resource)}
+                                        {block.notes ? ` · ${block.notes}` : ""}
                                     </Text>
                                 </View>
 
                                 <TouchableOpacity
                                     style={styles.blockDeleteButton}
-                                    onPress={() =>
-                                        handleDeleteBlock(block._id)
-                                    }
-                                    disabled={
-                                        deletingBlockId === block._id
-                                    }
+                                    onPress={() => handleDeleteBlock(block._id)}
+                                    disabled={deletingBlockId === block._id}
                                 >
-                                    {deletingBlockId ===
-                                        block._id ? (
-                                        <ActivityIndicator
-                                            size="small"
-                                            color="#b91c1c"
-                                        />
+                                    {deletingBlockId === block._id ? (
+                                        <ActivityIndicator size="small" color="#b91c1c" />
                                     ) : (
-                                        <Text
-                                            style={
-                                                styles.blockDeleteButtonText
-                                            }
-                                        >
-                                            מחיקה
-                                        </Text>
+                                        <Text style={styles.blockDeleteButtonText}>מחיקה</Text>
                                     )}
                                 </TouchableOpacity>
                             </View>
@@ -967,12 +721,8 @@ export default function OpeningHoursSettingsSection() {
                 </View>
             </View>
 
-            {/* מודאל בחירת תאריך לחסימה (יום או טווח) */}
-            <Modal
-                visible={showBlockDateModal}
-                transparent
-                animationType="slide"
-            >
+            {/* מודאל בחירת תאריך לחסימה */}
+            <Modal visible={showBlockDateModal} transparent animationType="slide">
                 <View style={styles.modalBackdrop}>
                     <View style={styles.modalCard}>
                         <Text style={styles.modalTitle}>
@@ -991,11 +741,7 @@ export default function OpeningHoursSettingsSection() {
                                     setBlockDate(day.dateString);
                                 } else if (activeDateField === "start") {
                                     setBlockStartDate(day.dateString);
-                                    if (!blockEndDate) {
-                                        setBlockEndDate(
-                                            day.dateString
-                                        );
-                                    }
+                                    if (!blockEndDate) setBlockEndDate(day.dateString);
                                 } else {
                                     setBlockEndDate(day.dateString);
                                 }
@@ -1003,13 +749,8 @@ export default function OpeningHoursSettingsSection() {
                             }}
                         />
 
-                        <TouchableOpacity
-                            style={styles.modalCloseButton}
-                            onPress={() => setShowBlockDateModal(false)}
-                        >
-                            <Text style={styles.modalCloseButtonText}>
-                                סגור
-                            </Text>
+                        <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShowBlockDateModal(false)}>
+                            <Text style={styles.modalCloseButtonText}>סגור</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -1030,36 +771,13 @@ const styles = StyleSheet.create({
         elevation: 3,
         gap: 8,
     },
-    cardTitle: {
-        fontSize: 18,
-        fontWeight: "600",
-        marginBottom: 4,
-    },
-    cardSubtitle: {
-        fontSize: 13,
-        color: "#6b7280",
-    },
-    cardSubtitleHighlight: {
-        fontSize: 13,
-        color: "#4b5563",
-        marginTop: 4,
-        fontWeight: "500",
-    },
-    openingRow: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-    },
-    openingDayLabel: {
-        width: 60,
-        fontSize: 14,
-        fontWeight: "500",
-    },
-    openingInputs: {
-        flex: 1,
-        flexDirection: "row",
-        gap: 8,
-    },
+    cardTitle: { fontSize: 18, fontWeight: "600", marginBottom: 4 },
+    cardSubtitle: { fontSize: 13, color: "#6b7280" },
+    cardSubtitleHighlight: { fontSize: 13, color: "#4b5563", marginTop: 4, fontWeight: "500" },
+
+    openingRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+    openingDayLabel: { width: 60, fontSize: 14, fontWeight: "500" },
+    openingInputs: { flex: 1, flexDirection: "row", gap: 8 },
     inputSmall: {
         borderWidth: 1,
         borderColor: "#e5e7eb",
@@ -1079,57 +797,32 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: "#d1d5db",
     },
-    closeDayButtonActive: {
-        backgroundColor: "#fee2e2",
-        borderColor: "#ef4444",
-    },
-    closeDayButtonText: {
-        fontSize: 12,
-        color: "#374151",
-        fontWeight: "500",
-    },
-    closeDayButtonTextActive: {
-        color: "#b91c1c",
-        fontWeight: "600",
-    },
-    actionButton: {
-        paddingVertical: 10,
-        borderRadius: 999,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    actionButtonText: {
-        color: "#ffffff",
-        fontSize: 14,
-        fontWeight: "600",
-    },
+    closeDayButtonActive: { backgroundColor: "#fee2e2", borderColor: "#ef4444" },
+    closeDayButtonText: { fontSize: 12, color: "#374151", fontWeight: "500" },
+    closeDayButtonTextActive: { color: "#b91c1c", fontWeight: "600" },
+    actionButton: { paddingVertical: 10, borderRadius: 999, alignItems: "center", justifyContent: "center" },
+    actionButtonText: { color: "#ffffff", fontSize: 14, fontWeight: "600" },
 
-    // ===== חסימות =====
-    blockSection: {
-        marginTop: 18,
-        paddingTop: 12,
-        borderTopWidth: 1,
-        borderTopColor: "#e5e7eb",
-        gap: 8,
+    blockSection: { marginTop: 18, paddingTop: 12, borderTopWidth: 1, borderTopColor: "#e5e7eb", gap: 8 },
+    blockTitle: { fontSize: 16, fontWeight: "600", marginBottom: 2, textAlign: "right" },
+
+    // חדש: בחירת resource
+    resourceRow: { flexDirection: "row-reverse", flexWrap: "wrap", gap: 6, marginTop: 4 },
+    resourceChip: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: "#d1d5db",
+        backgroundColor: "#f9fafb",
     },
-    blockTitle: {
-        fontSize: 16,
-        fontWeight: "600",
-        marginBottom: 2,
-        textAlign: "right",
-    },
-    blockRow: {
-        flexDirection: "row",
-        gap: 8,
-        marginTop: 4,
-    },
-    reasonRow: {
-        flexDirection: "row-reverse",
-        flexWrap: "wrap",
-        gap: 6,
-        marginTop: 4,
-        marginBottom: 4,
-    },
+    resourceChipActive: { backgroundColor: "#1d4ed8", borderColor: "#1d4ed8" },
+    resourceChipText: { fontSize: 12, color: "#374151" },
+    resourceChipTextActive: { color: "#ffffff", fontWeight: "600" },
+
+    blockRow: { flexDirection: "row", gap: 8, marginTop: 4 },
+
+    reasonRow: { flexDirection: "row-reverse", flexWrap: "wrap", gap: 6, marginTop: 4, marginBottom: 4 },
     reasonChip: {
         paddingHorizontal: 10,
         paddingVertical: 6,
@@ -1138,26 +831,11 @@ const styles = StyleSheet.create({
         borderColor: "#d1d5db",
         backgroundColor: "#f9fafb",
     },
-    reasonChipActive: {
-        backgroundColor: "#1d4ed8",
-        borderColor: "#1d4ed8",
-    },
-    reasonChipText: {
-        fontSize: 12,
-        color: "#374151",
-    },
-    reasonChipTextActive: {
-        color: "#ffffff",
-        fontWeight: "600",
-    },
+    reasonChipActive: { backgroundColor: "#1d4ed8", borderColor: "#1d4ed8" },
+    reasonChipText: { fontSize: 12, color: "#374151" },
+    reasonChipTextActive: { color: "#ffffff", fontWeight: "600" },
 
-    // ===== מצב חסימה =====
-    modeRow: {
-        flexDirection: "row-reverse",
-        gap: 8,
-        marginTop: 6,
-        marginBottom: 4,
-    },
+    modeRow: { flexDirection: "row-reverse", gap: 8, marginTop: 6, marginBottom: 4 },
     modeChip: {
         flex: 1,
         paddingVertical: 6,
@@ -1168,21 +846,10 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
-    modeChipActive: {
-        backgroundColor: "#1d4ed8",
-        borderColor: "#1d4ed8",
-    },
-    modeChipText: {
-        fontSize: 13,
-        color: "#374151",
-        fontWeight: "500",
-    },
-    modeChipTextActive: {
-        color: "#ffffff",
-        fontWeight: "600",
-    },
+    modeChipActive: { backgroundColor: "#1d4ed8", borderColor: "#1d4ed8" },
+    modeChipText: { fontSize: 13, color: "#374151", fontWeight: "500" },
+    modeChipTextActive: { color: "#ffffff", fontWeight: "600" },
 
-    // ===== בחירת תאריך =====
     datePickerButton: {
         borderWidth: 1,
         borderColor: "#e5e7eb",
@@ -1194,25 +861,10 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         marginTop: 4,
     },
-    datePickerButtonText: {
-        fontSize: 13,
-        color: "#111827",
-    },
-    datePickerHint: {
-        fontSize: 11,
-        color: "#9ca3af",
-        marginTop: 2,
-        textAlign: "right",
-    },
+    datePickerButtonText: { fontSize: 13, color: "#111827" },
+    datePickerHint: { fontSize: 11, color: "#9ca3af", marginTop: 2, textAlign: "right" },
 
-    // ===== פריסטי שעות =====
-    timePresetRow: {
-        flexDirection: "row-reverse",
-        flexWrap: "wrap",
-        gap: 8,
-        marginTop: 4,
-        marginBottom: 4,
-    },
+    timePresetRow: { flexDirection: "row-reverse", flexWrap: "wrap", gap: 8, marginTop: 4, marginBottom: 4 },
     timePresetChip: {
         paddingHorizontal: 10,
         paddingVertical: 6,
@@ -1221,39 +873,13 @@ const styles = StyleSheet.create({
         borderColor: "#d1d5db",
         backgroundColor: "#f9fafb",
     },
-    timePresetChipActive: {
-        backgroundColor: "#1d4ed8",
-        borderColor: "#1d4ed8",
-    },
-    timePresetText: {
-        fontSize: 12,
-        color: "#374151",
-    },
-    timePresetTextActive: {
-        color: "#ffffff",
-        fontWeight: "600",
-    },
+    timePresetChipActive: { backgroundColor: "#1d4ed8", borderColor: "#1d4ed8" },
+    timePresetText: { fontSize: 12, color: "#374151" },
+    timePresetTextActive: { color: "#ffffff", fontWeight: "600" },
 
-    // ===== רשימת חסימות =====
-    blockListContainer: {
-        marginTop: 16,
-        borderTopWidth: 1,
-        borderTopColor: "#e5e7eb",
-        paddingTop: 10,
-        gap: 8,
-    },
-    blockListTitle: {
-        fontSize: 14,
-        fontWeight: "600",
-        textAlign: "right",
-        marginBottom: 4,
-    },
-    blockEmptyText: {
-        fontSize: 12,
-        color: "#9ca3af",
-        textAlign: "right",
-        marginTop: 4,
-    },
+    blockListContainer: { marginTop: 16, borderTopWidth: 1, borderTopColor: "#e5e7eb", paddingTop: 10, gap: 8 },
+    blockListTitle: { fontSize: 14, fontWeight: "600", textAlign: "right", marginBottom: 4 },
+    blockEmptyText: { fontSize: 12, color: "#9ca3af", textAlign: "right", marginTop: 4 },
     blockItem: {
         flexDirection: "row-reverse",
         alignItems: "center",
@@ -1265,17 +891,9 @@ const styles = StyleSheet.create({
         borderColor: "#e5e7eb",
         gap: 8,
     },
-    blockItemTitle: {
-        fontSize: 13,
-        fontWeight: "600",
-        textAlign: "right",
-    },
-    blockItemSubtitle: {
-        fontSize: 12,
-        color: "#6b7280",
-        marginTop: 2,
-        textAlign: "right",
-    },
+    blockItemTitle: { fontSize: 13, fontWeight: "600", textAlign: "right" },
+    blockItemSubtitle: { fontSize: 12, color: "#6b7280", marginTop: 2, textAlign: "right" },
+
     blockDeleteButton: {
         paddingVertical: 4,
         paddingHorizontal: 10,
@@ -1284,31 +902,11 @@ const styles = StyleSheet.create({
         borderColor: "#b91c1c",
         backgroundColor: "#fee2e2",
     },
-    blockDeleteButtonText: {
-        fontSize: 12,
-        color: "#b91c1c",
-        fontWeight: "600",
-    },
+    blockDeleteButtonText: { fontSize: 12, color: "#b91c1c", fontWeight: "600" },
 
-    // ===== מודאל תאריך =====
-    modalBackdrop: {
-        flex: 1,
-        justifyContent: "flex-end",
-        backgroundColor: "rgba(0,0,0,0.25)",
-    },
-    modalCard: {
-        backgroundColor: "#fff",
-        padding: 16,
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
-        maxHeight: "80%",
-    },
-    modalTitle: {
-        fontSize: 16,
-        fontWeight: "700",
-        marginBottom: 10,
-        textAlign: "center",
-    },
+    modalBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.25)" },
+    modalCard: { backgroundColor: "#fff", padding: 16, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "80%" },
+    modalTitle: { fontSize: 16, fontWeight: "700", marginBottom: 10, textAlign: "center" },
     modalCloseButton: {
         marginTop: 8,
         alignSelf: "center",
@@ -1319,9 +917,5 @@ const styles = StyleSheet.create({
         borderColor: "#1d4ed8",
         backgroundColor: "#eef2ff",
     },
-    modalCloseButtonText: {
-        fontSize: 13,
-        color: "#1d4ed8",
-        fontWeight: "600",
-    },
+    modalCloseButtonText: { fontSize: 13, color: "#1d4ed8", fontWeight: "600" },
 });
