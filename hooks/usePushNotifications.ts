@@ -19,20 +19,12 @@ export function usePushNotifications(): PushState {
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        // האפליקציה לא מוכנה / המשתמש לא מחובר
-        if (!appReady || !userToken) {
-            setToken(null);
-            return;
-        }
+        // 🔍 בדיקה 1: האם ההוק בכלל רץ?
+        console.log("🔍 Hook started. Status:", { appReady, hasToken: !!userToken });
 
-        // 👇 אם רצים בתוך Expo Go – לא מנסים בכלל להירשם לפושים
-        if (Constants.appOwnership === "expo") {
-            console.log(
-                "Running inside Expo Go – skipping push registration (remote push requires a dev build)."
-            );
+        if (!appReady || !userToken) {
+            console.log("🛑 App not ready or no user token yet.");
             setToken(null);
-            setLoading(false);
-            setError(null);
             return;
         }
 
@@ -41,15 +33,17 @@ export function usePushNotifications(): PushState {
         (async () => {
             setLoading(true);
             setError(null);
+            console.log("🚀 Starting registration process...");
 
             try {
+                // קריאה לפונקציה שמשיגה את הטוקן
                 const expoToken = await registerForPushNotificationsAsync();
 
+                // 🔍 בדיקה 2: האם קיבלנו טוקן מהטלפון?
+                console.log("📲 Token from device result:", expoToken);
+
                 if (!expoToken) {
-                    if (!cancelled) {
-                        // פה אפשר לא לשים שגיאה כדי לא לעצבן את המשתמש
-                        console.log("No push token received");
-                    }
+                    console.log("🛑 Registration failed - No token returned from register function.");
                     return;
                 }
 
@@ -58,17 +52,19 @@ export function usePushNotifications(): PushState {
                 }
 
                 // שמירת ה-token בשרת
+                console.log("📡 Sending token to server via apiFetch...");
                 try {
-                    await apiFetch("/users/me/push-token", {
+                    const res = await apiFetch("/users/me/push-token", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ expoPushToken: expoToken }),
                     });
+                    console.log("✅ Server response:", res);
                 } catch (err) {
-                    console.log("failed to save push token on server:", err);
+                    console.error("❌ Failed to save push token on server (API Error):", err);
                 }
             } catch (err: any) {
-                console.log("push registration error:", err);
+                console.error("❌ General Error in process:", err);
                 if (!cancelled) {
                     setError(err?.message || "שגיאה בהרשמה לפושים");
                 }
@@ -87,17 +83,15 @@ export function usePushNotifications(): PushState {
     return { token, loading, error };
 }
 
+// 👇 הפונקציה שעושה את העבודה מול המכשיר
 async function registerForPushNotificationsAsync(): Promise<string | null> {
     if (!Device.isDevice) {
         console.log("Push notifications only work on a physical device");
         return null;
     }
 
-    // 🔒 שוב בדיקה ליתר ביטחון
-    if (Constants.appOwnership === "expo") {
-        console.log("Expo Go detected — aborting push registration.");
-        return null;
-    }
+    // ❌❌❌ מחקתי את הבדיקה של Expo Go מכאן כדי שלא תחסום אותך בטעות ב-Dev Build
+    // if (Constants.appOwnership === "expo") { ... }
 
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
@@ -108,23 +102,29 @@ async function registerForPushNotificationsAsync(): Promise<string | null> {
     }
 
     if (finalStatus !== "granted") {
-        console.log("Permission for notifications not granted");
+        console.log("Permission for notifications not granted!");
         return null;
     }
 
+    // משיכת ה-Project ID מהקונפיגורציה
     const projectId = (Constants.expoConfig?.extra as any)?.eas?.projectId as
         | string
         | undefined;
 
     let tokenData;
 
-    if (projectId) {
-        tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-    } else {
-        console.warn("No projectId found in app config, using fallback");
-        tokenData = await Notifications.getExpoPushTokenAsync();
-    }
+    try {
+        if (projectId) {
+            tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+        } else {
+            console.warn("No projectId found in app config, using fallback");
+            tokenData = await Notifications.getExpoPushTokenAsync();
+        }
+        console.log("📲 Expo push token generated:", tokenData.data);
+        return tokenData.data;
 
-    console.log("📲 Expo push token:", tokenData.data);
-    return tokenData.data;
+    } catch (e) {
+        console.error("Error getting push token:", e);
+        return null;
+    }
 }

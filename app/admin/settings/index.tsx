@@ -76,7 +76,7 @@ const NAV_SECTIONS: {
         {
             key: "push",
             title: "הודעות Push",
-            subtitle: "שליחת הודעות ללקוחות (בקרוב)",
+            subtitle: "שליחת הודעה ללקוחות, ניהול התראות",
             icon: "📣",
         },
         {
