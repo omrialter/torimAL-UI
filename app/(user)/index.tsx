@@ -17,6 +17,7 @@ import {
     View,
 } from "react-native";
 import JumpingMsg from "../../components/jumpingMsg";
+import { QuickBookButton } from "../../components/QuickBookButton";
 import WorksGallery from "../../components/WorksGallery";
 import { useAuth } from "../../contexts/AuthContext";
 
@@ -158,6 +159,8 @@ export default function Index() {
                         </Text>
                     </TouchableOpacity>
                 </View>
+
+                <QuickBookButton />
 
                 <View
                     style={[

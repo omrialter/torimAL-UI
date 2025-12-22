@@ -1,3 +1,4 @@
+import { useBusinessDataContext } from "@/contexts/BusinessDataContext"; // או הנתיב הנכון שלך
 import { useUserDataContext } from "@/contexts/UserDataContext";
 import { Link, usePathname } from "expo-router";
 import React, { useCallback, useMemo, useRef, useState } from "react";
@@ -26,12 +27,16 @@ const DRAWER_WIDTH = Math.round(SCREEN_WIDTH * 0.7);
 
 export default function Menu({ children, style }: Props) {
     const pathname = usePathname();
-
-    // 🛑 מסכים שבהם אין תפריט
     const isAuthScreen = pathname === "/login" || pathname === "/signup";
 
     const { userData } = useUserDataContext();
     const { logout, isAdmin } = useAuth();
+
+    // ✅ תיקון 1: הקריאה להוק חייבת להיות כאן, בתוך הקומפוננטה
+    const { businessData } = useBusinessDataContext();
+
+    // שליפת הצבע מהמידע שהגיע (עם גיבוי לצבע זהב אם הנתונים טרם נטענו)
+    const primaryColor = businessData?.business_colors?.primary || "#FFD700";
 
     const translateX = useRef(new Animated.Value(DRAWER_WIDTH)).current;
     const [open, setOpen] = useState(false);
@@ -48,7 +53,7 @@ export default function Menu({ children, style }: Props) {
     );
 
     const openDrawer = useCallback(() => {
-        if (isAuthScreen) return; // 🔒 אל תפתח בעמודי לוגין/סיינאפ
+        if (isAuthScreen) return;
         setOpen(true);
         animateTo(0);
     }, [animateTo, isAuthScreen]);
@@ -59,16 +64,17 @@ export default function Menu({ children, style }: Props) {
     }, [animateTo]);
 
     const toggleDrawer = useCallback(() => {
-        if (isAuthScreen) return; // 🔒 חסימה גם ב-toggle
+        if (isAuthScreen) return;
         open ? closeDrawer() : openDrawer();
     }, [open, openDrawer, closeDrawer, isAuthScreen]);
 
     const content = useMemo(() => children(toggleDrawer), [children, toggleDrawer]);
 
+    // ✅ תיקון 2: יצירת סטייל דינמי שמשתמש במשתנה
+    const dynamicLinkStyle = [styles.adminLink, { color: primaryColor }];
+
     return (
         <View style={[{ flex: 1 }, style]}>
-
-            {/* הצד של התפריט — מוצג רק אם לא בלוגין/סיינאפ */}
             {!isAuthScreen && (
                 <Animated.View
                     style={[
@@ -76,7 +82,6 @@ export default function Menu({ children, style }: Props) {
                         { transform: [{ translateX }] },
                     ]}
                 >
-                    {/* Header row */}
                     <View style={styles.headerRow}>
                         <TouchableOpacity
                             onPress={closeDrawer}
@@ -93,13 +98,9 @@ export default function Menu({ children, style }: Props) {
                         </Text>
                     </View>
 
-                    {/* Navigation Links */}
                     <View style={{ marginTop: 20 }}>
                         <Link href="/" style={styles.link} onPress={closeDrawer}>
                             🏠 בית
-                        </Link>
-                        <Link href="/ourTeam" style={styles.link} onPress={closeDrawer}>
-                            הצוות שלנו
                         </Link>
                         <Link href="/orderTor" style={styles.link} onPress={closeDrawer}>
                             זימון תור
@@ -108,32 +109,36 @@ export default function Menu({ children, style }: Props) {
                             התורים שלך
                         </Link>
                         <Link href="/" style={styles.link} onPress={closeDrawer}>
-                            קצת עלינו
+                            התראות
                         </Link>
 
                         {isAdmin && (
-                            <View style={styles.adminBox}>
-                                <Link href="/admin/bi_page" style={styles.link} onPress={closeDrawer}>
-                                    BI Page
+                            <View style={styles.adminSection}>
+                                <View style={styles.divider} />
+
+                                <Text style={styles.adminHeader}>ניהול מערכת</Text>
+
+                                {/* שימוש בסטייל הדינמי */}
+                                <Link href="/admin/bi_page" style={dynamicLinkStyle} onPress={closeDrawer}>
+                                    <Text style={styles.adminIcon}>📊</Text> נתוני עסק
                                 </Link>
-                                <Link href="/admin/torim" style={styles.link} onPress={closeDrawer}>
-                                    Admin Appointments
+                                <Link href="/admin/torim" style={dynamicLinkStyle} onPress={closeDrawer}>
+                                    <Text style={styles.adminIcon}>📅</Text> ניהול תורים
                                 </Link>
-                                <Link href="/admin/settings" style={styles.link} onPress={closeDrawer}>
-                                    Admin Settings
+                                <Link href="/admin/settings" style={dynamicLinkStyle} onPress={closeDrawer}>
+                                    <Text style={styles.adminIcon}>⚙️</Text> הגדרות
                                 </Link>
                             </View>
                         )}
                     </View>
 
-                    {/* Logout Button */}
                     <View style={styles.logoutBtn}>
-                        <Button title="Log out" onPress={() => logout()} />
+                        {/* שימוש בצבע גם לכפתור */}
+                        <Button title="Log out" onPress={() => logout()} color={primaryColor} />
                     </View>
                 </Animated.View>
             )}
 
-            {/* Dim background when open */}
             {open && !isAuthScreen && (
                 <TouchableOpacity
                     style={styles.overlay}
@@ -142,7 +147,6 @@ export default function Menu({ children, style }: Props) {
                 />
             )}
 
-            {/* Page content */}
             {content}
         </View>
     );
@@ -161,13 +165,11 @@ const styles = StyleSheet.create({
         zIndex: 999,
         alignItems: "stretch",
     },
-
     headerRow: {
         flexDirection: "row",
         alignItems: "center",
         marginBottom: 12,
     },
-
     section: {
         flex: 1,
         color: "#888",
@@ -176,40 +178,56 @@ const styles = StyleSheet.create({
         textTransform: "uppercase",
         textAlign: "right",
     },
-
     closeBtn: {
         marginLeft: 12,
         paddingVertical: 4,
         paddingHorizontal: 6,
     },
-
     closeText: {
         color: "#fff",
         fontSize: 20,
         lineHeight: 20,
     },
-
     link: {
         color: "#fff",
         fontSize: 18,
         marginVertical: 12,
         textAlign: "right",
     },
-
-    adminBox: {
-        borderColor: "white",
-        borderWidth: 1,
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        marginTop: 24,
+    adminSection: {
+        marginTop: 20,
+        paddingHorizontal: 0,
     },
-
+    divider: {
+        height: 1,
+        backgroundColor: "#333",
+        marginVertical: 15,
+        width: '100%',
+    },
+    adminHeader: {
+        color: "#8E8E93",
+        fontSize: 12,
+        marginBottom: 10,
+        textAlign: "right",
+        fontWeight: "600",
+        letterSpacing: 1,
+        opacity: 0.8,
+    },
+    // ✅ תיקון 3: הסרנו את הצבע מפה כי הוא מגיע דינמית
+    adminLink: {
+        fontSize: 16,
+        marginVertical: 10,
+        textAlign: "right",
+        fontWeight: "500",
+    },
+    adminIcon: {
+        fontSize: 14,
+    },
     overlay: {
         ...StyleSheet.absoluteFillObject,
         backgroundColor: "rgba(0,0,0,0.4)",
         zIndex: 5,
     },
-
     logoutBtn: {
         flex: 1,
         justifyContent: "space-evenly",

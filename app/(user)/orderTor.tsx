@@ -1,5 +1,5 @@
 // -----------------------------------------------------------
-// BookAppointmentScreen.tsx — כולל openingHours + חסימות (blocks)
+// BookAppointmentScreen.tsx — כולל תמיכה ב-QuickBook
 // -----------------------------------------------------------
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -18,7 +18,8 @@ import { CalendarList } from "react-native-calendars";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
-import { useRouter } from "expo-router";
+// 👇 הוספנו את useLocalSearchParams
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { URL, apiFetch } from "../../services/api";
 
 // ---------- Constants ----------
@@ -230,7 +231,10 @@ function DayCell({
     const d = new Date(date.dateString);
     const opening = getOpeningRangeForDate(d, business);
     const isBlockedDay = !!blockedDatesMap[date.dateString];
-    const isClosed = !opening || isBlockedDay;
+
+    // בדיקה נוספת: אם ה-state הוא 'disabled' (ימים מהעבר ב-CalendarList)
+    const isPast = state === 'disabled';
+    const isClosed = !opening || isBlockedDay || isPast;
 
     const isSelected = !!selectedDate && date.dateString === dateToYMD(selectedDate);
     const isToday = state === "today";
@@ -239,10 +243,12 @@ function DayCell({
         <TouchableOpacity
             onPress={() => {
                 if (isClosed) {
-                    Alert.alert(
-                        isBlockedDay ? "היום חסום (חופשה / אירוע מיוחד)" : "העסק סגור ביום זה",
-                        "בחר יום אחר מתוך הימים הפתוחים."
-                    );
+                    if (!isPast) { // הודעה רק אם זה לא יום מהעבר
+                        Alert.alert(
+                            isBlockedDay ? "היום חסום (חופשה / אירוע מיוחד)" : "העסק סגור ביום זה",
+                            "בחר יום אחר מתוך הימים הפתוחים."
+                        );
+                    }
                     return;
                 }
                 onPickDate(date.dateString);
@@ -254,6 +260,7 @@ function DayCell({
                     styles.dayContainer,
                     isBlockedDay && styles.dayContainerBlocked,
                     isSelected && styles.dayContainerSelected,
+                    isPast && { opacity: 0.3 } // ויזואלית להחליש ימים מהעבר
                 ]}
             >
                 <Text
@@ -348,6 +355,43 @@ const BookAppointmentScreen = () => {
     const selectedWorkerId = useMemo(() => {
         return selectedStaff?.id || staffOptions[0]?.id || null;
     }, [selectedStaff, staffOptions]);
+
+    // -----------------------------------------------------------
+    // 👇 תוספת: טיפול ב-QuickBook (קליטת פרמטרים ומילוי אוטומטי)
+    // -----------------------------------------------------------
+    const params = useLocalSearchParams();
+    const { preSelectedDate, workerId: paramWorkerId, serviceId: paramServiceId } = params;
+
+    useEffect(() => {
+        // אם אין פרמטרים - לא עושים כלום
+        if (!preSelectedDate || !paramWorkerId || !paramServiceId) return;
+
+        // אם המשתמש כבר בחר דברים, לא נדרוס לו אותם (אופציונלי)
+        if (selectedDate && selectedTime && selectedStaff && selectedService) return;
+
+        // 1. מציאת עובד
+        const workerObj = staffOptions.find(s => s.id === paramWorkerId);
+        if (workerObj) {
+            setSelectedStaff(workerObj);
+        }
+
+        // 2. מציאת שירות
+        const serviceObj = services.find(s => s.id === paramServiceId);
+        if (serviceObj) {
+            setSelectedService(serviceObj);
+        }
+
+        // 3. הגדרת יום ושעה
+        if (typeof preSelectedDate === 'string') {
+            const dateObj = new Date(preSelectedDate);
+            if (!isNaN(dateObj.getTime())) {
+                setSelectedDate(dateObj); // ליומן
+                setSelectedTime(dateObj); // לשעה
+            }
+        }
+    }, [preSelectedDate, paramWorkerId, paramServiceId, staffOptions, services]);
+    // -----------------------------------------------------------
+
 
     // Load appointments for selected day
     useEffect(() => {
@@ -492,10 +536,25 @@ const BookAppointmentScreen = () => {
         const slots: Date[] = [];
         let cursor = new Date(dayStart);
 
+        // בדיקה: האם התאריך הנבחר הוא היום?
+        const now = new Date();
+        const isToday =
+            selectedDate.getDate() === now.getDate() &&
+            selectedDate.getMonth() === now.getMonth() &&
+            selectedDate.getFullYear() === now.getFullYear();
+
         while (true) {
             const slotStart = new Date(cursor);
             const slotEnd = new Date(slotStart.getTime() + minutesToMs(duration));
             if (slotEnd > dayEnd) break;
+
+            // --- לוגיקה חדשה: סינון שעות שכבר עברו אם היום הוא "היום" ---
+            if (isToday && slotStart < now) {
+                // מדלגים על השעה הזו וממשיכים הלאה
+                cursor = new Date(cursor.getTime() + minutesToMs(duration));
+                continue;
+            }
+            // -----------------------------------------------------------
 
             const conflictWithAppt = appts.some((a) => intervalsOverlap(slotStart, slotEnd, a.start, a.end));
             const conflictWithBlock = blockIntervals.some((b) => intervalsOverlap(slotStart, slotEnd, b.start, b.end));
@@ -668,7 +727,15 @@ const BookAppointmentScreen = () => {
             </ScrollView>
 
             {/* STAFF MODAL */}
-            <Modal visible={showStaffModal} transparent animationType="slide">
+            <Modal
+                visible={showStaffModal}
+                transparent
+                animationType="slide"
+                onRequestClose={() => {
+                    setSelectedStaff(null);
+                    setShowStaffModal(false);
+                }}
+            >
                 <View style={styles.modalBackdrop}>
                     <View style={styles.modalCard2}>
                         <Text style={styles.modalTitle}>בחר איש צוות</Text>
@@ -693,7 +760,15 @@ const BookAppointmentScreen = () => {
             </Modal>
 
             {/* SERVICE MODAL */}
-            <Modal visible={showServiceModal} transparent animationType="slide">
+            <Modal
+                visible={showServiceModal}
+                transparent
+                animationType="slide"
+                onRequestClose={() => {
+                    setSelectedService(null);
+                    setShowServiceModal(false);
+                }}
+            >
                 <View style={styles.modalBackdrop}>
                     <View style={styles.modalCard2}>
                         <Text style={styles.modalTitle}>בחר טיפול</Text>
@@ -720,7 +795,15 @@ const BookAppointmentScreen = () => {
             </Modal>
 
             {/* DATE MODAL */}
-            <Modal visible={showDateModal} transparent animationType="slide">
+            <Modal
+                visible={showDateModal}
+                transparent
+                animationType="slide"
+                onRequestClose={() => {
+                    setSelectedDate(null);
+                    setShowDateModal(false);
+                }}
+            >
                 <View style={styles.modalBackdrop}>
                     <View style={[styles.modalCard, { height: "80%" }]}>
                         <Text style={styles.modalTitle}>בחירת יום</Text>
@@ -750,7 +833,15 @@ const BookAppointmentScreen = () => {
             </Modal>
 
             {/* TIME MODAL */}
-            <Modal visible={showTimeModal} transparent animationType="slide">
+            <Modal
+                visible={showTimeModal}
+                transparent
+                animationType="slide"
+                onRequestClose={() => {
+                    setSelectedTime(null);
+                    setShowTimeModal(false);
+                }}
+            >
                 <View style={styles.modalBackdrop}>
                     <View style={styles.modalCard}>
                         <Text style={styles.modalTitle}>בחר שעה</Text>
@@ -760,7 +851,7 @@ const BookAppointmentScreen = () => {
                         ) : availableSlots.length === 0 ? (
                             <>
                                 <Text style={styles.emptyText}>
-                                    אין שעות פנויות ביום זה. ייתכן שכל היום תפוס, שהעסק סגור, או שקיימת חסימה (חופשה / יום מיוחד).
+                                    אין שעות פנויות ביום זה. ייתכן שכל היום תפוס, שהעסק סגור, או שקיימת חסימה (חופשה / יום מיוחד), או שהשעות עברו.
                                 </Text>
                                 <TouchableOpacity
                                     style={styles.backButton}

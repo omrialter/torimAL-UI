@@ -29,9 +29,24 @@ export default function SignUpScreen() {
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
 
+    // ✅ נרמול לפורמט E.164 לישראל (+972...)
     const normalizePhone = (raw: string) => {
         if (!raw) return raw;
-        return raw.startsWith("0") ? raw.replace(/^0/, "+972") : raw;
+
+        // מסיר רווחים/מקפים/סוגריים וכו', ומשאיר רק ספרות ו-+
+        let p = raw.replace(/[^\d+]/g, "");
+
+        // כבר בפורמט הנכון
+        if (p.startsWith("+972")) return p;
+
+        // 05X... -> +9725X...
+        if (p.startsWith("0")) return "+972" + p.slice(1);
+
+        // 5X... -> +9725X...
+        if (p.startsWith("5")) return "+972" + p;
+
+        // fallback (כדי שתראה בלוג מה באמת נשלח)
+        return p;
     };
 
     const sendOTP = async () => {
@@ -46,11 +61,23 @@ export default function SignUpScreen() {
 
             const normalized = normalizePhone(phone);
 
+            // ✅ לוגים קריטיים לדיבוג
+            console.log("SEND OTP raw:", phone);
+            console.log("SEND OTP normalized:", normalized);
+
             const conf = await auth().signInWithPhoneNumber(normalized);
+
+            // אם זה מגיע לכאן – Firebase “אישר” את הבקשה לשליחה
+            console.log("OTP request accepted. verificationId:", conf?.verificationId);
+
             setConfirmation(conf);
-        } catch (err) {
-            console.error("OTP send failed:", err);
-            setError("Failed to send OTP");
+        } catch (err: any) {
+            // ✅ לוגים קריטיים: חייבים לראות code/message
+            console.log("OTP send failed code:", err?.code);
+            console.log("OTP send failed message:", err?.message);
+            console.log("OTP send failed full:", err);
+
+            setError(`${err?.code || "unknown"}: ${err?.message || "Failed to send OTP"}`);
         } finally {
             setLoading(false);
         }
@@ -80,11 +107,11 @@ export default function SignUpScreen() {
 
             await SecureStore.setItemAsync("jwt", res.data.token);
 
-            // כרגע אחרי הרשמה מחזירים למסך התחברות (כמו שהיה)
+            // אחרי הרשמה מחזירים למסך התחברות
             router.replace("/login");
         } catch (err: any) {
             console.error("Signup failed:", err);
-            setError(err.response?.data?.error || "Signup failed");
+            setError(err.response?.data?.error || err?.message || "Signup failed");
         } finally {
             setLoading(false);
         }
@@ -102,6 +129,7 @@ export default function SignUpScreen() {
                         onChangeText={setName}
                         style={styles.input}
                     />
+
                     <TextInput
                         placeholder="Phone (05...)"
                         value={phone}
@@ -109,6 +137,7 @@ export default function SignUpScreen() {
                         keyboardType="phone-pad"
                         style={styles.input}
                     />
+
                     <Button
                         title={loading ? "Sending..." : "Send OTP"}
                         onPress={sendOTP}
@@ -124,6 +153,7 @@ export default function SignUpScreen() {
                         keyboardType="number-pad"
                         style={styles.input}
                     />
+
                     <Button
                         title={loading ? "Verifying..." : "Verify and Sign Up"}
                         onPress={verifyAndSignup}
@@ -156,5 +186,7 @@ const styles = StyleSheet.create({
     error: {
         color: "red",
         marginTop: 10,
+        textAlign: "center",
+        paddingHorizontal: 16,
     },
 });

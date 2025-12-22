@@ -70,7 +70,7 @@ const NAV_SECTIONS: {
         {
             key: "support",
             title: "תמיכה ויצירת קשר",
-            subtitle: "פניה לעזרה, דיווח תקלה, הצעות (בקרוב)",
+            subtitle: "פניה לעזרה, דיווח תקלה, הצעות",
             icon: "🆘",
         },
         {
