@@ -1,81 +1,90 @@
+// hooks/useBusinessData.ts
 import Constants from "expo-constants";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { URL, apiGet } from "../services/api";
+import { apiGet } from "../services/api";
 
-type BusinessData = Record<string, any>;
+// ----------------------------------------------------------------------
+// Types & Defaults
+// ----------------------------------------------------------------------
 
-const DEFAULT_COLORS = {
+export type BusinessColors = {
+    primary: string;
+    secondary: string;
+    third: string;
+};
+
+const DEFAULT_COLORS: BusinessColors = {
     primary: "#111",
     secondary: "#f3f4f6",
     third: "#fff",
 };
 
-export function useBusinessData() {
+// ----------------------------------------------------------------------
+// Hook
+// ----------------------------------------------------------------------
+
+export function useBusinessData<T = any>() {
+    // שליפת ה-ID מתוך הקונפיגורציה (app.json / app.config.js)
     const BUSINESS_ID = Constants.expoConfig?.extra?.BUSINESS_ID;
 
     const { appReady, userToken } = useAuth();
-    const [businessData, setBusinessData] = useState<BusinessData>({});
+
+    const [businessData, setBusinessData] = useState<T | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
 
-    const doApiBusiness = useCallback(async () => {
+    /**
+     * טעינת נתוני העסק מהשרת
+     */
+    const fetchBusinessData = useCallback(async () => {
         if (!BUSINESS_ID) {
-            console.warn("useBusinessData: Missing BUSINESS_ID in app config");
+            console.warn("⚠️ useBusinessData: Missing BUSINESS_ID in app config");
             return;
         }
 
+        setLoading(true);
+        setError(null);
+
         try {
-            setLoading(true);
-            setError(null);
+            // אין צורך לשרשר את URL, הפונקציה apiGet מטפלת בזה
+            const data = await apiGet<T>(`/businesses/businessInfo/${BUSINESS_ID}`);
 
-            const data = await apiGet(
-                `${URL}/businesses/businessInfo/` + BUSINESS_ID
-            );
-
-            console.log("useBusinessData: business from API:", data);
-
-            setBusinessData(data);
-
-            console.log(
-                "useBusinessData: business data loaded, id:",
-                BUSINESS_ID
-            );
+            if (data) {
+                setBusinessData(data);
+            }
         } catch (err: any) {
-            console.log("useBusinessData/doApiBusiness error:", err);
             setError("Failed to load business data");
         } finally {
             setLoading(false);
         }
     }, [BUSINESS_ID]);
 
+    // טעינה אוטומטית כאשר האפליקציה מוכנה ויש משתמש מחובר
     useEffect(() => {
         if (!appReady) return;
 
         if (userToken) {
-            void doApiBusiness();
+            void fetchBusinessData();
         } else {
-            setBusinessData({});
+            setBusinessData(null);
         }
-    }, [appReady, userToken, doApiBusiness]);
+    }, [appReady, userToken, fetchBusinessData]);
 
-    const clear = () => {
-        setBusinessData({});
+    const clear = useCallback(() => {
+        setBusinessData(null);
         setError(null);
-    };
+    }, []);
 
-    // 🎨 נשלוף את הצבעים מתוך הנתונים, או ניפול ל-default אם אין
-    const colors =
-        (businessData?.business_colors as
-            | { primary: string; secondary: string; third: string }
-            | undefined) || DEFAULT_COLORS;
+    // חילוץ הצבעים בצורה בטוחה עם Fallback
+    const colors: BusinessColors = (businessData as any)?.business_colors || DEFAULT_COLORS;
 
     return {
         businessData,
         colors,
         loading,
         error,
-        refetch: doApiBusiness,
+        refetch: fetchBusinessData,
         clear,
     };
 }

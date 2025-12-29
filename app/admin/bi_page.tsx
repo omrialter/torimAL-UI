@@ -1,3 +1,4 @@
+// app/admin/bi_page.tsx
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import React, { useCallback, useEffect, useState } from "react";
@@ -10,21 +11,29 @@ import {
     Text,
     View,
 } from "react-native";
-import { useAuth } from "../../contexts/AuthContext";
-import { useBusinessData } from "../../hooks/useBusinessData"; // הנתיב שלך
-import { apiGet, URL } from "../../services/api"; // הנתיב שלך
 
-// עדכנו את הטיפוסים כדי להתאים לשינוי בשרת
+import { useAuth } from "../../contexts/AuthContext";
+import { useBusinessData } from "../../hooks/useBusinessData";
+import { apiGet } from "../../services/api";
+
+// ----------------------------------------------------------------------
+// Types
+// ----------------------------------------------------------------------
+
 type StatsData = {
     totalClients: number;
     completedThisMonth: number;
-    noShowThisMonth: number; // שינינו מ-canceled ל-noShow
+    noShowThisMonth: number;
     completedLastMonth: number;
-    noShowLastMonth: number; // שינינו מ-canceled ל-noShow
+    noShowLastMonth: number;
     inactiveUsers: number;
 };
 
 const { width } = Dimensions.get("window");
+
+// ----------------------------------------------------------------------
+// Component
+// ----------------------------------------------------------------------
 
 export default function BusinessStatsScreen() {
     const { colors, businessData } = useBusinessData();
@@ -38,9 +47,13 @@ export default function BusinessStatsScreen() {
 
     const fetchStats = useCallback(async () => {
         if (!BUSINESS_ID || !userToken) return;
+
         try {
-            const data = await apiGet(`${URL}/businesses/${BUSINESS_ID}/stats`);
-            setStats(data);
+            // אין צורך ב-${URL}, ה-apiGet מטפל בזה
+            const data = await apiGet<StatsData>(`/businesses/${BUSINESS_ID}/stats`);
+            if (data) {
+                setStats(data);
+            }
         } catch (err) {
             console.error("Failed to load stats:", err);
         } finally {
@@ -58,6 +71,7 @@ export default function BusinessStatsScreen() {
         fetchStats();
     };
 
+    // --- Sub-Component: Stat Card ---
     const StatCard = ({
         title,
         value,
@@ -77,6 +91,7 @@ export default function BusinessStatsScreen() {
             <View style={[styles.iconContainer, { backgroundColor: color + "20" }]}>
                 <MaterialCommunityIcons name={icon} size={28} color={color} />
             </View>
+
             <View>
                 <Text style={styles.cardValue}>{value}</Text>
                 <Text style={styles.cardTitle}>{title}</Text>
@@ -90,6 +105,7 @@ export default function BusinessStatsScreen() {
         </View>
     );
 
+    // --- Loading State ---
     if (loading && !stats) {
         return (
             <View style={styles.center}>
@@ -98,9 +114,13 @@ export default function BusinessStatsScreen() {
         );
     }
 
+    // --- Data Conversion & Fallbacks ---
+    // המרת הנתונים לטיפוס המקומי כדי למנוע שגיאות (במקרה ו-businessData הוא any/unknown)
+    const businessName = (businessData as any)?.name || "העסק שלי";
+
     return (
         <ScrollView
-            contentContainerStyle={styles.container}
+            contentContainerStyle={[styles.container, { flexGrow: 1 }]}
             refreshControl={
                 <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
             }
@@ -110,7 +130,7 @@ export default function BusinessStatsScreen() {
                     סקירה עסקית
                 </Text>
                 <Text style={styles.subtitle}>
-                    {businessData?.name || "העסק שלי"} - נתונים בזמן אמת
+                    {businessName} - נתונים בזמן אמת
                 </Text>
             </View>
 
@@ -134,12 +154,12 @@ export default function BusinessStatsScreen() {
                     bgColor="#ECFDF5"
                 />
 
-                {/* הברזות (No Show) - עודכן */}
+                {/* הברזות */}
                 <StatCard
                     title="הברזות ללא ביטול"
                     value={stats?.noShowThisMonth || 0}
                     subValue={`בחודש שעבר: ${stats?.noShowLastMonth || 0}`}
-                    icon="account-alert-outline" // אייקון שמתאים יותר להברזה
+                    icon="account-alert-outline"
                     color="#EF4444" // אדום
                     bgColor="#FEF2F2"
                 />
@@ -168,11 +188,13 @@ const styles = StyleSheet.create({
     container: {
         padding: 20,
         paddingBottom: 40,
+        backgroundColor: "#fff", // רקע בסיס נקי
     },
     center: {
         flex: 1,
         justifyContent: "center",
         alignItems: "center",
+        backgroundColor: "#fff",
     },
     header: {
         marginBottom: 24,
@@ -182,12 +204,12 @@ const styles = StyleSheet.create({
         fontSize: 28,
         fontWeight: "bold",
         marginBottom: 4,
-        textAlign: "right",
+        textAlign: "center",
     },
     subtitle: {
         fontSize: 16,
         color: "#6b7280",
-        textAlign: "right",
+        textAlign: "center",
     },
     grid: {
         flexDirection: "row",
@@ -195,10 +217,11 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
     },
     card: {
-        width: (width - 50) / 2,
+        width: (width - 50) / 2, // חישוב רוחב: (מסך - רווחים) / 2
         padding: 16,
         borderRadius: 16,
         marginBottom: 16,
+        // צל עדין
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.05,
@@ -218,11 +241,14 @@ const styles = StyleSheet.create({
         fontWeight: "bold",
         color: "#111827",
         marginBottom: 4,
+        textAlign: "left", // מספרים עדיף משמאל גם בעברית לעיתים, אבל כאן תלוי העדפה
     },
     cardTitle: {
         fontSize: 13,
         color: "#6b7280",
         lineHeight: 18,
+        textAlign: "right", // עברית
+        writingDirection: "rtl",
     },
     subValueContainer: {
         marginTop: 12,
@@ -233,19 +259,24 @@ const styles = StyleSheet.create({
     subValueText: {
         fontSize: 12,
         color: "#9ca3af",
+        textAlign: "right",
+        writingDirection: "rtl",
     },
     infoBox: {
         marginTop: 20,
         padding: 16,
         borderRadius: 12,
         borderWidth: 1,
-        flexDirection: "row",
+        flexDirection: "row", // LTR layout for icon + text
         alignItems: "center",
-        backgroundColor: "#fff",
+        backgroundColor: "#f9fafb",
     },
     infoText: {
         marginLeft: 10,
         color: "#4b5563",
         fontSize: 14,
+        flex: 1,
+        textAlign: "right",
+        writingDirection: "rtl",
     },
 });

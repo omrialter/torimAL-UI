@@ -1,7 +1,4 @@
 // app/admin/settings/ColorPresetSettingsSection.tsx
-import { useAuth } from "@/contexts/AuthContext";
-import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
-import { URL } from "@/services/api";
 import React, { useState } from "react";
 import {
     ActivityIndicator,
@@ -12,7 +9,19 @@ import {
     View,
 } from "react-native";
 
-// אותם שמות כמו בשרת
+import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
+import { apiPatch } from "@/services/api";
+
+// ----------------------------------------------------------------------
+// Types & Config
+// ----------------------------------------------------------------------
+
+type ColorPreset = {
+    primary: string;
+    secondary: string;
+    third: string;
+};
+
 const PRESET_OPTIONS = [
     { key: "professional", label: "Professional" },
     { key: "midnight", label: "Midnight" },
@@ -21,11 +30,7 @@ const PRESET_OPTIONS = [
     { key: "royal", label: "Royal" },
 ];
 
-// רק לצורך תצוגה באפליקציה – לא משפיע על השרת
-const PRESET_COLORS: Record<
-    string,
-    { primary: string; secondary: string; third: string }
-> = {
+const PRESET_COLORS: Record<string, ColorPreset> = {
     professional: {
         primary: "#1d4ed8",
         secondary: "#f3f4f6",
@@ -53,48 +58,30 @@ const PRESET_COLORS: Record<
     },
 };
 
+// ----------------------------------------------------------------------
+// Component
+// ----------------------------------------------------------------------
+
 export default function ColorPresetSettingsSection() {
     const { colors, refetch } = useBusinessDataContext();
-    const { userToken } = useAuth();
-
-    const colorsSafe = {
-        primary: colors?.primary ?? "#1d4ed8",
-        secondary: colors?.secondary ?? "#f3f4f6",
-        third: colors?.third ?? "#0b1120",
-    };
+    const currentPrimary = colors?.primary;
 
     const [updatingPreset, setUpdatingPreset] = useState<string | null>(null);
 
     const handleChangePreset = async (presetKey: string) => {
+        setUpdatingPreset(presetKey);
+
         try {
-            setUpdatingPreset(presetKey);
+            const res = await apiPatch("/businesses/colors", { preset: presetKey });
 
-            const res = await fetch(`${URL}/businesses/colors`, {
-                method: "PATCH",
-                headers: {
-                    "Content-Type": "application/json",
-                    "x-api-key": userToken || "",
-                },
-                body: JSON.stringify({ preset: presetKey }),
-            });
-
-            const rawText = await res.text();
-            console.log(
-                "📥 change preset response:",
-                res.status,
-                rawText.substring(0, 500)
-            );
-
-            if (!res.ok) {
-                console.log("change preset error:", rawText);
+            if (res) { // apiPatch מחזיר null במקרה של כישלון
+                await refetch();
+                Alert.alert("הצלחה", "צבעי העסק עודכנו.");
+            } else {
                 Alert.alert("שגיאה", "לא ניתן לעדכן צבעים כרגע.");
-                return;
             }
-
-            await refetch();
-            Alert.alert("הצלחה", "צבעי העסק עודכנו.");
         } catch (err) {
-            console.log("change preset error (exception):", err);
+            console.error("Change preset error:", err);
             Alert.alert("שגיאה", "אירעה תקלה בעדכון הצבעים.");
         } finally {
             setUpdatingPreset(null);
@@ -111,50 +98,30 @@ export default function ColorPresetSettingsSection() {
             <View style={styles.presetsRow}>
                 {PRESET_OPTIONS.map((p) => {
                     const preview = PRESET_COLORS[p.key];
+                    const isSelected = preview?.primary === currentPrimary; // זיהוי בסיסי לפי צבע ראשי
+
                     return (
                         <TouchableOpacity
                             key={p.key}
                             style={[
                                 styles.presetButton,
-                                updatingPreset === p.key && {
-                                    borderColor: colorsSafe.primary,
-                                },
+                                isSelected && { borderColor: preview.primary, borderWidth: 2 },
                             ]}
                             onPress={() => handleChangePreset(p.key)}
                             disabled={!!updatingPreset}
                         >
                             <View style={styles.presetHeader}>
-                                <Text style={styles.presetLabel}>
+                                <Text style={[styles.presetLabel, isSelected && { color: preview.primary }]}>
                                     {p.label}
                                 </Text>
-                                {updatingPreset === p.key && (
-                                    <ActivityIndicator size="small" />
-                                )}
+                                {updatingPreset === p.key && <ActivityIndicator size="small" />}
                             </View>
-                            {/* הצגת שלושת הצבעים */}
+
                             {preview && (
                                 <View style={styles.colorRow}>
-                                    <View
-                                        style={[
-                                            styles.colorDot,
-                                            { backgroundColor: preview.primary },
-                                        ]}
-                                    />
-                                    <View
-                                        style={[
-                                            styles.colorDot,
-                                            {
-                                                backgroundColor:
-                                                    preview.secondary,
-                                            },
-                                        ]}
-                                    />
-                                    <View
-                                        style={[
-                                            styles.colorDot,
-                                            { backgroundColor: preview.third },
-                                        ]}
-                                    />
+                                    <View style={[styles.colorDot, { backgroundColor: preview.primary }]} />
+                                    <View style={[styles.colorDot, { backgroundColor: preview.secondary }]} />
+                                    <View style={[styles.colorDot, { backgroundColor: preview.third }]} />
                                 </View>
                             )}
                         </TouchableOpacity>
@@ -181,19 +148,21 @@ const styles = StyleSheet.create({
         fontSize: 18,
         fontWeight: "600",
         marginBottom: 4,
+        textAlign: "right", // עברית
     },
     cardSubtitle: {
         fontSize: 13,
         color: "#6b7280",
+        textAlign: "right", // עברית
+        marginBottom: 8,
     },
     presetsRow: {
         flexDirection: "column",
-        gap: 8,
-        marginTop: 8,
+        gap: 12,
     },
     presetButton: {
-        paddingVertical: 10,
-        paddingHorizontal: 12,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
         borderRadius: 12,
         borderWidth: 1,
         borderColor: "#e5e7eb",
@@ -203,21 +172,22 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
-        marginBottom: 6,
+        marginBottom: 8,
     },
     presetLabel: {
-        fontSize: 13,
+        fontSize: 14,
         fontWeight: "600",
+        color: "#374151",
     },
     colorRow: {
         flexDirection: "row",
-        gap: 6,
+        gap: 8,
     },
     colorDot: {
-        width: 18,
-        height: 18,
-        borderRadius: 9,
+        width: 24,
+        height: 24,
+        borderRadius: 12,
         borderWidth: 1,
-        borderColor: "#e5e7eb",
+        borderColor: "rgba(0,0,0,0.1)",
     },
 });

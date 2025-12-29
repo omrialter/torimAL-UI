@@ -1,4 +1,4 @@
-// app/admin/settings/Settings.tsx
+// app/admin/settings/index.tsx
 import React, { useRef, useState } from "react";
 import {
     ActivityIndicator,
@@ -12,6 +12,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
 
+// Sections
 import ColorPresetSettingsSection from "./ColorPresetSettingsSection";
 import EmployeesSettingsSection from "./EmployeesSettingsSection";
 import MediaSettingsSection from "./MediaSettingsSection";
@@ -20,6 +21,10 @@ import PushSettingsSection from "./PushSettingsSection";
 import ServicesSettingsSection from "./ServicesSettingsSection";
 import SupportSettingsSection from "./SupportSettingsSection";
 import TextsSettingsSection from "./TextsSettingsSection";
+
+// ----------------------------------------------------------------------
+// Types & Config
+// ----------------------------------------------------------------------
 
 type SectionKey =
     | "media"
@@ -40,75 +45,80 @@ const NAV_SECTIONS: {
         {
             key: "media",
             title: "מדיה ותמונות",
-            subtitle: "באנרים, וידאו וגלריית עבודות",
+            subtitle: "באנרים, וידאו וגלריה",
             icon: "🖼️",
         },
         {
             key: "texts",
             title: "טקסטים ומידע",
-            subtitle: "הודעה קופצת, כתובת, קצת עלינו",
+            subtitle: "הודעות, כתובת ואודות",
             icon: "✏️",
         },
         {
             key: "services",
             title: "שירותים",
-            subtitle: "הגדרת שירותים ומחירים",
+            subtitle: "ניהול טיפולים ומחירים",
             icon: "💇‍♀️",
         },
         {
             key: "openingHours",
             title: "שעות עבודה",
-            subtitle: "שעות פתיחה וסגירה לכל יום + חסימות",
+            subtitle: "זמני פתיחה וחסימות",
             icon: "🕒",
         },
         {
             key: "colors",
-            title: "צבעי אפליקציה",
-            subtitle: "בחירת פריסט צבעים למיתוג",
+            title: "עיצוב",
+            subtitle: "צבעי המותג באפליקציה",
             icon: "🎨",
         },
         {
-            key: "support",
-            title: "תמיכה ויצירת קשר",
-            subtitle: "פניה לעזרה, דיווח תקלה, הצעות",
-            icon: "🆘",
+            key: "employees",
+            title: "צוות",
+            subtitle: "ניהול עובדים ומשתמשים",
+            icon: "👥",
         },
         {
             key: "push",
             title: "הודעות Push",
-            subtitle: "שליחת הודעה ללקוחות, ניהול התראות",
+            subtitle: "שליחת עדכונים ללקוחות",
             icon: "📣",
         },
         {
-            key: "employees",
-            title: "ניהול עובדים",
-            subtitle: "הוספה ועריכת משתמשים",
-            icon: "👥",
+            key: "support",
+            title: "תמיכה",
+            subtitle: "יצירת קשר ודיווח תקלה",
+            icon: "🆘",
         },
     ];
 
-export default function Settings() {
+// ----------------------------------------------------------------------
+// Component
+// ----------------------------------------------------------------------
+
+export default function SettingsScreen() {
     const { businessData, colors } = useBusinessDataContext();
     const { isAdmin } = useAuth();
 
-    const business = (businessData || {}) as any;
-    const colorsSafe = {
+    // המרת נתונים בטוחה
+    const business = businessData as any;
+    const businessId = business?._id;
+
+    // ערכת צבעים
+    const theme = {
         primary: colors?.primary ?? "#1d4ed8",
         secondary: colors?.secondary ?? "#f3f4f6",
         third: colors?.third ?? "#0b1120",
     };
 
-    const businessId = business?._id;
-
     const [activeSection, setActiveSection] = useState<SectionKey>("media");
 
-    // 👇 ref ל-ScrollView + מיקום תחילת הסקשנים
     const scrollRef = useRef<ScrollView | null>(null);
     const [sectionsTopY, setSectionsTopY] = useState(0);
 
     const handleSelectSection = (key: SectionKey) => {
         setActiveSection(key);
-        // גלילה למטה לתחילת הסקשנים
+        // גלילה חלקה לאזור העריכה
         if (scrollRef.current) {
             scrollRef.current.scrollTo({
                 y: sectionsTopY,
@@ -117,10 +127,12 @@ export default function Settings() {
         }
     };
 
+    // --- Guards ---
+
     if (!isAdmin) {
         return (
             <View style={styles.center}>
-                <Text>אין לך הרשאות לעמוד זה.</Text>
+                <Text style={styles.errorText}>אין לך הרשאות צפייה במסך זה.</Text>
             </View>
         );
     }
@@ -128,23 +140,26 @@ export default function Settings() {
     if (!businessId) {
         return (
             <View style={styles.center}>
-                <ActivityIndicator />
-                <Text>טוען נתוני עסק...</Text>
+                <ActivityIndicator size="large" color={theme.primary} />
+                <Text style={styles.loadingText}>טוען הגדרות...</Text>
             </View>
         );
     }
 
+    // --- Render ---
+
     return (
         <ScrollView
             ref={scrollRef}
-            style={[styles.root, { backgroundColor: colorsSafe.secondary }]}
+            style={[styles.root, { backgroundColor: theme.secondary }]}
             contentContainerStyle={styles.content}
+            showsVerticalScrollIndicator={false}
         >
-            <Text style={[styles.title, { color: colorsSafe.primary }]}>
-                עמוד הגדרות
+            <Text style={[styles.title, { color: theme.primary }]}>
+                הגדרות העסק
             </Text>
 
-            {/* ניווט ראשי – גריד של קופסאות */}
+            {/* --- Navigation Grid --- */}
             <View style={styles.navGrid}>
                 {NAV_SECTIONS.map((section) => {
                     const isActive = activeSection === section.key;
@@ -155,41 +170,36 @@ export default function Settings() {
                             style={[
                                 styles.navItem,
                                 isActive && {
-                                    borderColor: colorsSafe.primary,
-                                    backgroundColor: "#eef2ff",
+                                    borderColor: theme.primary,
+                                    backgroundColor: "#eef2ff", // כחול בהיר מאוד
                                 },
                             ]}
                             onPress={() => handleSelectSection(section.key)}
-                            activeOpacity={0.9}
+                            activeOpacity={0.8}
                         >
-                            <View
-                                style={[
-                                    styles.navIconCircle,
-                                    isActive && {
-                                        backgroundColor: colorsSafe.primary,
-                                    },
-                                ]}
-                            >
-                                <Text
+                            <View style={styles.navHeader}>
+                                <View
                                     style={[
-                                        styles.navIcon,
-                                        isActive && { color: "#ffffff" },
+                                        styles.navIconCircle,
+                                        isActive && { backgroundColor: theme.primary },
                                     ]}
                                 >
-                                    {section.icon}
-                                </Text>
+                                    <Text style={[styles.navIcon, isActive && { color: "#fff" }]}>
+                                        {section.icon}
+                                    </Text>
+                                </View>
                             </View>
 
                             <View style={styles.navTextWrapper}>
                                 <Text
                                     style={[
                                         styles.navTitle,
-                                        isActive && { color: colorsSafe.third },
+                                        isActive && { color: theme.third },
                                     ]}
                                 >
                                     {section.title}
                                 </Text>
-                                <Text style={styles.navSubtitle}>
+                                <Text style={styles.navSubtitle} numberOfLines={2}>
                                     {section.subtitle}
                                 </Text>
                             </View>
@@ -198,17 +208,15 @@ export default function Settings() {
                 })}
             </View>
 
-            {/* הסקשן הנבחר מתחת לגריד */}
+            {/* --- Active Section Content --- */}
             <View
-                style={{ marginTop: 12, gap: 16 }}
+                style={styles.sectionContainer}
                 onLayout={(e) => setSectionsTopY(e.nativeEvent.layout.y)}
             >
                 {activeSection === "media" && <MediaSettingsSection />}
                 {activeSection === "texts" && <TextsSettingsSection />}
                 {activeSection === "services" && <ServicesSettingsSection />}
-                {activeSection === "openingHours" && (
-                    <OpeningHoursSettingsSection />
-                )}
+                {activeSection === "openingHours" && <OpeningHoursSettingsSection />}
                 {activeSection === "colors" && <ColorPresetSettingsSection />}
                 {activeSection === "support" && <SupportSettingsSection />}
                 {activeSection === "push" && <PushSettingsSection />}
@@ -224,75 +232,101 @@ const styles = StyleSheet.create({
     },
     content: {
         padding: 16,
-        paddingBottom: 120, // ⬅️ מרווח יפה ונקי
-        gap: 16,
+        paddingBottom: 100, // מרווח תחתון נדיב
     },
-
     center: {
         flex: 1,
         justifyContent: "center",
         alignItems: "center",
+        padding: 20,
+    },
+    loadingText: {
+        marginTop: 12,
+        color: "#6b7280",
+    },
+    errorText: {
+        color: "#ef4444",
+        fontSize: 16,
+        textAlign: "center",
     },
     title: {
-        fontSize: 22,
-        fontWeight: "700",
+        fontSize: 24,
+        fontWeight: "800",
         textAlign: "center",
-        marginBottom: 8,
+        marginBottom: 20,
     },
 
-    // ==== ניווט כגריד של 8 קופסאות ====
+    // Grid
     navGrid: {
-        flexDirection: "row-reverse",
+        flexDirection: "row-reverse", // RTL
         flexWrap: "wrap",
         justifyContent: "space-between",
-        rowGap: 10,
-        columnGap: 10,
-        marginBottom: 4,
+        gap: 12,
+        marginBottom: 24,
     },
     navItem: {
-        width: "48%",
-        minHeight: 110,
-        borderRadius: 18,
+        width: "48%", // שתי עמודות
+        minHeight: 120,
+        borderRadius: 16,
         backgroundColor: "#ffffff",
-        paddingVertical: 10,
-        paddingHorizontal: 12,
+        padding: 12,
         borderWidth: 1,
-        borderColor: "#e5e7eb",
+        borderColor: "transparent", // שומר מקום לגבול הנבחר
+
+        // Shadow
         shadowColor: "#000",
-        shadowOpacity: 0.04,
-        shadowRadius: 6,
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
         shadowOffset: { width: 0, height: 2 },
         elevation: 2,
-        alignItems: "flex-end",
+
         justifyContent: "space-between",
     },
+    navHeader: {
+        alignItems: "flex-start", // Icon on left (because of RTL context? actually in RN default is LTR, lets check)
+        // אם כל האפליקציה ב-RTL (I18nManager), אז flex-start זה ימין.
+        // כאן אנחנו רוצים את האייקון בצד אחד ואת הטקסט בצד השני או למטה.
+        // העיצוב המקורי שם את האייקון למעלה משמאל (alignSelf: flex-start).
+        // בוא נשמור על זה נקי:
+        width: '100%',
+        flexDirection: 'row',
+        justifyContent: 'flex-end', // אייקון בשמאל (במבט עברית זה שמאל)
+    },
     navIconCircle: {
-        width: 34,
-        height: 34,
-        borderRadius: 17,
-        backgroundColor: "#e5e7eb",
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: "#f3f4f6",
         alignItems: "center",
         justifyContent: "center",
-        marginBottom: 6,
-        alignSelf: "flex-start",
     },
     navIcon: {
-        fontSize: 20,
+        fontSize: 18,
     },
     navTextWrapper: {
-        alignItems: "flex-end",
-        width: "100%",
+        marginTop: 12,
+        alignItems: "flex-end", // יישור לימין (עברית)
     },
     navTitle: {
         fontSize: 15,
-        fontWeight: "600",
-        textAlign: "right",
-        marginBottom: 2,
+        fontWeight: "700",
         color: "#111827",
+        marginBottom: 4,
+        textAlign: "right",
     },
     navSubtitle: {
-        fontSize: 11,
+        fontSize: 12,
         color: "#6b7280",
         textAlign: "right",
+        lineHeight: 16,
+    },
+
+    // Section Area
+    sectionContainer: {
+        marginTop: 8,
+        // אפשר להוסיף כאן רקע לבן לכל הסקשן אם רוצים להבליט אותו
+        // backgroundColor: '#fff',
+        // borderRadius: 16,
+        // padding: 16,
     },
 });

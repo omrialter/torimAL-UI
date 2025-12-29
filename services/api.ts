@@ -1,23 +1,40 @@
 // services/api.ts
 import Constants from "expo-constants";
 
-let AUTH_TOKEN: string | null = null;
+// ----------------------------------------------------------------------
+// Configuration & State
+// ----------------------------------------------------------------------
 
-// קריאת ה-API_URL
-const API_URL =
-  Constants.expoConfig?.extra?.API_URL ||
-  "http://10.0.0.6:3005"; // fallback (local)
+/**
+ * כתובת השרת.
+ * נלקחת מהקונפיגורציה של Expo ב-Prod, או כתובת מקומית כ-Fallback לפיתוח.
+ */
+const API_URL = Constants.expoConfig?.extra?.API_URL || "http://10.0.0.12:3005";
 
 export const URL = API_URL;
 export const TOKEN_KEY = "posts_token";
 
+let AUTH_TOKEN: string | null = null;
+
+// ניהול מאזינים למקרה של שגיאת 401 (Unauthorized)
 type UnauthListener = () => void;
 const unauthListeners: UnauthListener[] = [];
 
+// ----------------------------------------------------------------------
+// Auth Helpers
+// ----------------------------------------------------------------------
+
+/**
+ * מגדיר את הטוקן שיישלח בכל בקשה לשרת.
+ */
 export function setAuthToken(token: string | null) {
   AUTH_TOKEN = token;
 }
 
+/**
+ * רישום פונקציה שתרוץ כאשר השרת מחזיר 401.
+ * בדרך כלל משמש להעברת המשתמש למסך התחברות.
+ */
 export function onUnauthorized(listener: UnauthListener) {
   unauthListeners.push(listener);
   return () => {
@@ -34,26 +51,30 @@ function emitUnauthorized() {
   });
 }
 
+// ----------------------------------------------------------------------
+// Core Fetch Wrapper
+// ----------------------------------------------------------------------
+
 type FetchOpts = RequestInit & { skipAuthHeader?: boolean };
 
-// -------------------------
-// Low-level fetch wrapper
-// -------------------------
+/**
+ * פונקציית מעטפת בסיסית ל-fetch.
+ * מוסיפה אוטומטית את ה-Header של האותנטיקציה ומטפלת בכתובת המלאה.
+ */
 export async function apiFetch(url: string, opts: FetchOpts = {}) {
   const headers = new Headers(opts.headers || {});
 
-  // auth header
+  // הוספת הטוקן אם קיים ולא ביקשנו לדלג עליו
   if (!opts.skipAuthHeader && AUTH_TOKEN) {
     headers.set("x-api-key", AUTH_TOKEN);
   }
 
-  // if URL is relative, prefix API_URL
+  // בניית כתובת מלאה אם נשלח נתיב יחסי
   const fullUrl = url.startsWith("http") ? url : `${API_URL}${url}`;
-
-  console.log(`📡 Fetching: ${fullUrl}`);
 
   const res = await fetch(fullUrl, { ...opts, headers });
 
+  // זיהוי גלובלי של פקיעת תוקף טוקן
   if (res.status === 401) {
     emitUnauthorized();
   }
@@ -61,9 +82,14 @@ export async function apiFetch(url: string, opts: FetchOpts = {}) {
   return res;
 }
 
-// -------------------------
-// Helpers
-// -------------------------
+// ----------------------------------------------------------------------
+// Error & Response Parsing Helpers
+// ----------------------------------------------------------------------
+
+/**
+ * מנסה לפענח JSON מהתשובה בצורה בטוחה.
+ * אם התוכן אינו JSON או שיש שגיאה, מחזיר null.
+ */
 async function parseJsonSafe(res: Response) {
   const contentType = res.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) return null;
@@ -75,10 +101,13 @@ async function parseJsonSafe(res: Response) {
   }
 }
 
+/**
+ * זורק שגיאה עם פרטים מהשרת אם הבקשה נכשלה.
+ */
 async function throwApiError(res: Response, prefix: string) {
   const payload = await parseJsonSafe(res);
 
-  // ננסה להוציא הודעה טובה מהשרת
+  // חילוץ הודעת שגיאה מהפורמטים הנפוצים בשרת
   const serverMsg =
     payload?.message ||
     payload?.error ||
@@ -92,16 +121,17 @@ async function throwApiError(res: Response, prefix: string) {
 
   const error: any = new Error(msg);
   error.status = res.status;
-  error.payload = payload;
+  error.payload = payload; // גישה לנתונים הגולמיים של השגיאה
   throw error;
 }
 
 type JsonOpts = Omit<FetchOpts, "method" | "body">;
 
-// -------------------------
-// REST helpers
-// -------------------------
-export async function apiGet(url: string, opts: JsonOpts = {}) {
+// ----------------------------------------------------------------------
+// REST Methods
+// ----------------------------------------------------------------------
+
+export async function apiGet<T = any>(url: string, opts: JsonOpts = {}): Promise<T | null> {
   const res = await apiFetch(url, { ...opts, method: "GET" });
   if (!res.ok) await throwApiError(res, "API_GET_FAILED");
   return parseJsonSafe(res);
@@ -119,33 +149,17 @@ export async function apiPost<T = any>(
     body: JSON.stringify(body),
   });
 
-  let payload: any = null;
-  try {
-    payload = await res.json();
-  } catch { }
-
   if (!res.ok) {
-    const err: any = new Error(payload?.error || `API_POST_FAILED_${res.status}`);
-    err.status = res.status;
-    err.payload = payload; // ✅ חשוב כדי שתוכל להציג details
-    throw err;
+    // משתמשים באותו מנגנון שגיאה אחיד כמו בשאר הפונקציות
+    await throwApiError(res, "API_POST_FAILED");
   }
 
-  return payload as T;
+  // מחזירים את הפיילוד
+  const data = await parseJsonSafe(res);
+  return data as T;
 }
 
-export async function apiPatch(url: string, body: any, opts: JsonOpts = {}) {
-  const res = await apiFetch(url, {
-    ...opts,
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) await throwApiError(res, "API_PATCH_FAILED");
-  return parseJsonSafe(res);
-}
-
-export async function apiPut(url: string, body: any, opts: JsonOpts = {}) {
+export async function apiPut<T = any>(url: string, body: any, opts: JsonOpts = {}): Promise<T | null> {
   const res = await apiFetch(url, {
     ...opts,
     method: "PUT",
@@ -156,7 +170,18 @@ export async function apiPut(url: string, body: any, opts: JsonOpts = {}) {
   return parseJsonSafe(res);
 }
 
-export async function apiDelete(url: string, opts: JsonOpts = {}) {
+export async function apiPatch<T = any>(url: string, body: any, opts: JsonOpts = {}): Promise<T | null> {
+  const res = await apiFetch(url, {
+    ...opts,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) await throwApiError(res, "API_PATCH_FAILED");
+  return parseJsonSafe(res);
+}
+
+export async function apiDelete<T = any>(url: string, opts: JsonOpts = {}): Promise<T | null> {
   const res = await apiFetch(url, { ...opts, method: "DELETE" });
   if (!res.ok) await throwApiError(res, "API_DELETE_FAILED");
   return parseJsonSafe(res);

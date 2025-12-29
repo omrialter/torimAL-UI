@@ -1,14 +1,27 @@
 // app/(auth)/signup.tsx
 import auth, { FirebaseAuthTypes } from "@react-native-firebase/auth";
-import axios from "axios";
 import Constants from "expo-constants";
-import { router } from "expo-router";
-import * as SecureStore from "expo-secure-store";
-import React, { useState } from "react";
-import { Button, StyleSheet, Text, TextInput, View } from "react-native";
+import { Link, useRouter } from "expo-router";
+import React, { useMemo, useState } from "react";
+import {
+    ActivityIndicator,
+    Button,
+    KeyboardAvoidingView,
+    Platform,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+} from "react-native";
 
-// קונפיג מה־app.config.js
-const API_URL = Constants.expoConfig?.extra?.API_URL as string;
+import { apiPost } from "@/services/api";
+import { useAuth } from "../../contexts/AuthContext";
+
+// ----------------------------------------------------------------------
+// Configuration & Types
+// ----------------------------------------------------------------------
+
 const BUSINESS_ID = Constants.expoConfig?.extra?.BUSINESS_ID as string;
 
 interface AuthResponse {
@@ -20,173 +33,260 @@ interface AuthResponse {
     };
 }
 
+// נרמול מספר טלפון לפורמט בינלאומי (+972)
+const normalizePhone = (phone: string) => {
+    const p = (phone || "").replace(/[^\d+]/g, ""); // ניקוי תווים לא רצויים
+
+    if (p.startsWith("+972")) return p;
+    if (p.startsWith("0")) return "+972" + p.slice(1);
+    if (p.startsWith("5")) return "+972" + p;
+
+    return p;
+};
+
+// ----------------------------------------------------------------------
+// Component
+// ----------------------------------------------------------------------
+
 export default function SignUpScreen() {
+    const { login } = useAuth();
+    const router = useRouter();
+
+    // State
     const [name, setName] = useState("");
     const [phone, setPhone] = useState("");
     const [code, setCode] = useState("");
-    const [confirmation, setConfirmation] =
-        useState<FirebaseAuthTypes.ConfirmationResult | null>(null);
+
+    const [confirmation, setConfirmation] = useState<FirebaseAuthTypes.ConfirmationResult | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
 
-    // ✅ נרמול לפורמט E.164 לישראל (+972...)
-    const normalizePhone = (raw: string) => {
-        if (!raw) return raw;
+    const businessId = useMemo(() => String(BUSINESS_ID || "").trim(), []);
 
-        // מסיר רווחים/מקפים/סוגריים וכו', ומשאיר רק ספרות ו-+
-        let p = raw.replace(/[^\d+]/g, "");
-
-        // כבר בפורמט הנכון
-        if (p.startsWith("+972")) return p;
-
-        // 05X... -> +9725X...
-        if (p.startsWith("0")) return "+972" + p.slice(1);
-
-        // 5X... -> +9725X...
-        if (p.startsWith("5")) return "+972" + p;
-
-        // fallback (כדי שתראה בלוג מה באמת נשלח)
-        return p;
-    };
-
+    /**
+     * שלב 1: אימות טלפון מול Firebase ושליחת SMS
+     */
     const sendOTP = async () => {
+        setError(null);
+
+        if (!businessId) {
+            setError("שגיאת מערכת: חסר מזהה עסק.");
+            return;
+        }
+
+        if (!name.trim()) {
+            setError("נא להזין שם מלא");
+            return;
+        }
+
+        const normalized = normalizePhone(phone);
+        if (!normalized || normalized.length < 12) {
+            setError("נא להזין מספר טלפון תקין");
+            return;
+        }
+
+        setLoading(true);
+
         try {
-            setError(null);
-            setLoading(true);
+            // הערה: כאן אפשר להוסיף קריאה לשרת לבדוק אם המשתמש כבר קיים
+            // כדי לחסוך שליחת SMS, אבל השרת יחזיר שגיאה בהרשמה בכל מקרה.
 
-            if (!BUSINESS_ID) {
-                setError("Missing BUSINESS_ID in app config");
-                return;
-            }
-
-            const normalized = normalizePhone(phone);
-
-            // ✅ לוגים קריטיים לדיבוג
-            console.log("SEND OTP raw:", phone);
-            console.log("SEND OTP normalized:", normalized);
-
+            // שליחת SMS
             const conf = await auth().signInWithPhoneNumber(normalized);
-
-            // אם זה מגיע לכאן – Firebase “אישר” את הבקשה לשליחה
-            console.log("OTP request accepted. verificationId:", conf?.verificationId);
-
             setConfirmation(conf);
-        } catch (err: any) {
-            // ✅ לוגים קריטיים: חייבים לראות code/message
-            console.log("OTP send failed code:", err?.code);
-            console.log("OTP send failed message:", err?.message);
-            console.log("OTP send failed full:", err);
 
-            setError(`${err?.code || "unknown"}: ${err?.message || "Failed to send OTP"}`);
+        } catch (err: any) {
+            console.log("OTP Error:", err);
+            const msg = err.message || "שגיאה בשליחת הודעת אימות";
+            setError(msg);
         } finally {
             setLoading(false);
         }
     };
 
+    /**
+     * שלב 2: אימות קוד, יצירת משתמש בשרת והתחברות
+     */
     const verifyAndSignup = async () => {
         if (!confirmation) return;
 
-        try {
-            setError(null);
-            setLoading(true);
+        setError(null);
+        setLoading(true);
 
+        try {
+            // 1. אימות מול Firebase
             const credential = await confirmation.confirm(code);
 
-            if (!credential || !credential.user) {
-                setError("אימות נכשל. נסה שוב.");
-                return;
+            if (!credential?.user) {
+                throw new Error("אימות נכשל מול שירות ההודעות.");
             }
 
+            // 2. קבלת טוקן זיהוי
             const idToken = await credential.user.getIdToken();
 
-            const res = await axios.post<AuthResponse>(`${API_URL}/users/signup`, {
+            // 3. שליחת בקשת הרשמה לשרת שלנו
+            // ה-Service שלנו (apiPost) דואג לכתובת השרת ולטיפול בשגיאות
+            const res = await apiPost<AuthResponse>("/users/signup", {
                 idToken,
                 name,
-                businessId: BUSINESS_ID,
+                businessId,
             });
 
-            await SecureStore.setItemAsync("jwt", res.data.token);
+            // 4. התחברות אוטומטית למערכת
+            // הפונקציה login ב-AuthContext כבר שומרת את הטוקן ומעדכנת את ה-State
+            await login(res.token);
 
-            // אחרי הרשמה מחזירים למסך התחברות
-            router.replace("/login");
         } catch (err: any) {
-            console.error("Signup failed:", err);
-            setError(err.response?.data?.error || err?.message || "Signup failed");
+            // חילוץ הודעת שגיאה מהשרת (למשל: "User already exists")
+            const serverMsg =
+                err?.payload?.error ||
+                err?.message ||
+                "ההרשמה נכשלה. אנא נסה שנית.";
+
+            setError(String(serverMsg));
         } finally {
             setLoading(false);
         }
     };
 
+    const handleChangeNumber = () => {
+        setConfirmation(null);
+        setCode("");
+        setError(null);
+    };
+
     return (
-        <View style={styles.container}>
-            <Text style={styles.title}>Sign up page</Text>
+        <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            style={styles.container}
+        >
+            <View style={styles.content}>
+                <Text style={styles.title}>הרשמה ללקוח חדש</Text>
 
-            {!confirmation ? (
-                <>
-                    <TextInput
-                        placeholder="Full Name"
-                        value={name}
-                        onChangeText={setName}
-                        style={styles.input}
-                    />
+                {!confirmation ? (
+                    /* --- שלב 1: פרטים ושליחת קוד --- */
+                    <>
+                        <Text style={styles.label}>שם מלא</Text>
+                        <TextInput
+                            placeholder="ישראל ישראלי"
+                            value={name}
+                            onChangeText={setName}
+                            style={styles.input}
+                            textAlign="right"
+                        />
 
-                    <TextInput
-                        placeholder="Phone (05...)"
-                        value={phone}
-                        onChangeText={setPhone}
-                        keyboardType="phone-pad"
-                        style={styles.input}
-                    />
+                        <Text style={styles.label}>מספר טלפון</Text>
+                        <TextInput
+                            placeholder="050-0000000"
+                            value={phone}
+                            onChangeText={setPhone}
+                            keyboardType="phone-pad"
+                            style={styles.input}
+                            textAlign="right"
+                        />
 
-                    <Button
-                        title={loading ? "Sending..." : "Send OTP"}
-                        onPress={sendOTP}
-                        disabled={loading}
-                    />
-                </>
-            ) : (
-                <>
-                    <TextInput
-                        placeholder="Enter OTP"
-                        value={code}
-                        onChangeText={setCode}
-                        keyboardType="number-pad"
-                        style={styles.input}
-                    />
+                        {loading ? (
+                            <ActivityIndicator style={{ marginTop: 10 }} size="large" color="#000" />
+                        ) : (
+                            <Button title="שלח קוד אימות" onPress={sendOTP} />
+                        )}
+                    </>
+                ) : (
+                    /* --- שלב 2: אימות קוד --- */
+                    <>
+                        <Text style={styles.label}>קוד אימות (נשלח ב-SMS)</Text>
+                        <TextInput
+                            placeholder="123456"
+                            value={code}
+                            onChangeText={setCode}
+                            keyboardType="number-pad"
+                            style={[styles.input, { letterSpacing: 5, fontSize: 20, textAlign: 'center' }]}
+                            maxLength={6}
+                        />
 
-                    <Button
-                        title={loading ? "Verifying..." : "Verify and Sign Up"}
-                        onPress={verifyAndSignup}
-                        disabled={loading}
-                    />
-                </>
-            )}
+                        {loading ? (
+                            <ActivityIndicator style={{ marginTop: 10 }} size="large" color="#000" />
+                        ) : (
+                            <View style={{ gap: 10 }}>
+                                <Button title="אמת והירשם" onPress={verifyAndSignup} />
 
-            {error && <Text style={styles.error}>{error}</Text>}
-        </View>
+                                <TouchableOpacity onPress={handleChangeNumber} style={styles.changeNumberBtn}>
+                                    <Text style={styles.changeNumberText}>תיקון מספר טלפון</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+                    </>
+                )}
+
+                {error && <Text style={styles.error}>{error}</Text>}
+
+                <View style={styles.loginSection}>
+                    <Text style={styles.loginText}>כבר יש לך חשבון?</Text>
+                    <Link href="/login" style={styles.loginLink}>
+                        התחבר כאן
+                    </Link>
+                </View>
+            </View>
+        </KeyboardAvoidingView>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+        backgroundColor: "#fff",
+    },
+    content: {
+        flex: 1,
         justifyContent: "center",
-        alignItems: "center",
+        paddingHorizontal: 24,
     },
     title: {
-        fontSize: 30,
-        marginBottom: 50,
+        fontSize: 28,
+        marginBottom: 40,
+        fontWeight: "bold",
+        textAlign: "center",
+        color: "#333",
+    },
+    label: {
+        fontSize: 16,
+        marginBottom: 8,
+        color: "#666",
+        textAlign: "right",
     },
     input: {
         borderBottomWidth: 1,
-        marginBottom: 20,
-        padding: 10,
-        minWidth: 220,
+        borderBottomColor: "#ccc",
+        marginBottom: 24,
+        paddingVertical: 12,
+        paddingHorizontal: 4,
+        fontSize: 18,
+        backgroundColor: "#f9f9f9",
     },
     error: {
         color: "red",
-        marginTop: 10,
+        marginTop: 20,
         textAlign: "center",
-        paddingHorizontal: 16,
+        fontSize: 14,
+    },
+    loginSection: {
+        marginTop: 40,
+        alignItems: "center",
+    },
+    loginText: {
+        color: "#888",
+        marginBottom: 4,
+    },
+    loginLink: {
+        color: "#007AFF",
+        fontWeight: "600",
+        fontSize: 16,
+    },
+    changeNumberBtn: {
+        padding: 10,
+        alignItems: "center",
+    },
+    changeNumberText: {
+        color: "#007AFF",
     },
 });

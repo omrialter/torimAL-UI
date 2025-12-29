@@ -1,46 +1,69 @@
 import "dotenv/config";
 
+// --- ערכי ברירת מחדל לפיתוח (Development Fallbacks) ---
+// הערכים האלו ייכנסו לפעולה כשאתה מריץ את האפליקציה מקומית (npx expo start)
+// ואין לך קובץ .env מוגדר, או כשהמשתנים חסרים.
+const DEV_CONFIG = {
+  appName: "Torimal Dev",
+  slug: "torimal-dev",
+  scheme: "torimal",
+  bundleId: "com.torimal.test", // גם לאנדרואיד וגם ל-iOS
+  businessId: "6950909b49d14568c2d8da78",
+  googleServicesFile: "./google-services.json", // קובץ ברירת מחדל
+};
+
 export default {
   expo: {
-    name: "torimal",
-    slug: "torimal",
+    // 1. הגדרות דינמיות (משתנות לפי הלקוח)
+    name: process.env.APP_NAME || DEV_CONFIG.appName,
+    slug: process.env.APP_SLUG || DEV_CONFIG.slug,
+    scheme: process.env.APP_SCHEME || DEV_CONFIG.scheme,
     version: "1.0.0",
     orientation: "portrait",
-    icon: "./assets/images/icon.png",
-    scheme: "torimal",
+    icon: "./assets/images/icon.png", // ב-White Label מתקדם, אפשר להחליף גם אייקון דינמית
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
 
+    // 2. משתנים שיהיו זמינים בקוד (Runtime) דרך Constants.expoConfig.extra
     extra: {
       eas: {
         projectId: "fdc5244d-b3e3-4b32-8457-290e9d9e0a69",
       },
+      // ה-ID של העסק הספציפי לאפליקציה הזו
+      BUSINESS_ID: process.env.BUSINESS_ID || DEV_CONFIG.businessId,
+      API_URL: process.env.API_URL,
+
+      // הגדרות Firebase
       FIREBASE_API_KEY: process.env.FIREBASE_API_KEY,
       FIREBASE_AUTH_DOMAIN: process.env.FIREBASE_AUTH_DOMAIN,
       FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID,
       FIREBASE_STORAGE_BUCKET: process.env.FIREBASE_STORAGE_BUCKET,
       FIREBASE_MESSAGING_SENDER_ID: process.env.FIREBASE_MESSAGING_SENDER_ID,
       FIREBASE_APP_ID: process.env.FIREBASE_APP_ID,
-      API_URL: process.env.API_URL,
-      BUSINESS_ID: "686e770ad4294c85f74f7ca3",
     },
 
     ios: {
       supportsTablet: true,
+      // Bundle ID דינמי
+      bundleIdentifier: process.env.IOS_BUNDLE_IDENTIFIER || DEV_CONFIG.bundleId,
     },
 
     android: {
-      package: "com.torimal.test",
-      googleServicesFile: "./google-services.json",
+      // Package Name דינמי
+      package: process.env.ANDROID_PACKAGE || DEV_CONFIG.bundleId,
+
+      // ב-White Label ייתכן שלכל עסק יש קובץ google-services שונה
+      googleServicesFile: process.env.GOOGLE_SERVICES_FILE || DEV_CONFIG.googleServicesFile,
+
       adaptiveIcon: {
         foregroundImage: "./assets/images/adaptive-icon.png",
         backgroundColor: "#ffffff",
       },
       edgeToEdgeEnabled: true,
 
-      // ✅ LTR תמיד (כיבוי RTL ברמת AndroidManifest)
       manifest: {
         extraAttributes: {
+          // ביטול RTL (יישור לימין) אוטומטי של אנדרואיד כדי למנוע שבירת עיצוב
           "android:supportsRtl": "false",
         },
       },

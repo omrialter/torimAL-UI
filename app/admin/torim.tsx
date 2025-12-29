@@ -1,6 +1,6 @@
-// app/adminAppointments/AdminAppointmentsScreen.tsx
+// app/admin/torim.tsx
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -15,9 +15,11 @@ import { CalendarList } from "react-native-calendars";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
-import { URL, apiFetch } from "@/services/api";
+import { apiFetch } from "@/services/api";
 
-// ---- טיפוסים ----
+// ----------------------------------------------------------------------
+// Types
+// ----------------------------------------------------------------------
 
 type AppointmentStatus = "confirmed" | "canceled" | "completed" | "no_show";
 
@@ -44,28 +46,13 @@ interface ClientRef {
 interface Appointment {
     _id: string;
     business: string;
-    client: ClientRef | string;
+    client: ClientRef | string; // יכול להיות אובייקט או ID
     worker: string;
     service: AppointmentService;
     start: string;
     status: AppointmentStatus;
     notes?: string | null;
     createdAt?: string;
-}
-
-interface CalendarDay {
-    dateString: string;
-    day: number;
-    month: number;
-    year: number;
-    timestamp: number;
-}
-
-interface BusinessWithWorkers {
-    _id: string;
-    name: string;
-    owner: BusinessUserRef;
-    workers?: BusinessUserRef[];
 }
 
 interface Staff {
@@ -78,20 +65,17 @@ interface AdminStats {
     futureCount: number;
 }
 
-// ---- קבועים ----
-
-const API_URL = `${URL}/appointments`;
-
-// ---- פונקציות עזר ----
+// ----------------------------------------------------------------------
+// Helpers
+// ----------------------------------------------------------------------
 
 const dateToYMD = (date: Date): string => {
     const y = date.getFullYear();
-    const m = `${date.getMonth() + 1}`.padStart(2, "0");
-    const d = `${date.getDate()}`.padStart(2, "0");
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
     return `${y}-${m}-${d}`;
 };
 
-// רק טווח שעות – בלי תאריך כי הוא מופיע למעלה במסך
 const formatTimeRange = (iso: string, durationMin: number) => {
     const start = new Date(iso);
     const end = new Date(start.getTime() + durationMin * 60000);
@@ -111,37 +95,13 @@ const formatTimeRange = (iso: string, durationMin: number) => {
     return `${startTime} - ${endTime}`;
 };
 
-const statusLabel = (status: AppointmentStatus): string => {
-    switch (status) {
-        case "confirmed":
-            return "מאושר";
-        case "completed":
-            return "הושלם";
-        case "canceled":
-            return "בוטל";
-        case "no_show":
-            return "לא הגיע";
-        default:
-            return status;
-    }
+const STATUS_CONFIG: Record<AppointmentStatus, { label: string; color: string }> = {
+    confirmed: { label: "מאושר", color: "#22c55e" },
+    completed: { label: "הושלם", color: "#3b82f6" },
+    canceled: { label: "בוטל", color: "#ef4444" },
+    no_show: { label: "לא הגיע", color: "#f97316" },
 };
 
-const statusColor = (status: AppointmentStatus): string => {
-    switch (status) {
-        case "confirmed":
-            return "#22c55e";
-        case "completed":
-            return "#3b82f6";
-        case "canceled":
-            return "#ef4444";
-        case "no_show":
-            return "#f97316";
-        default:
-            return "#6b7280";
-    }
-};
-
-// כותרת יחסית ליום: היום / מחר / מחרתיים / עוד שבוע / בעוד X ימים / לפני X ימים
 const getRelativeDayLabel = (date: Date): string => {
     const startOfDay = (d: Date) => {
         const c = new Date(d);
@@ -157,26 +117,22 @@ const getRelativeDayLabel = (date: Date): string => {
 
     if (diffDays === 0) return "היום";
     if (diffDays === 1) return "מחר";
-    if (diffDays === 2) return "מחרתיים";
-    if (diffDays === 7) return "עוד שבוע";
-    if (diffDays > 2 && diffDays < 7) return `בעוד ${diffDays} ימים`;
-    if (diffDays > 7) return `בעוד ${diffDays} ימים`;
-
     if (diffDays === -1) return "אתמול";
-    if (diffDays === -2) return "שלשום";
-    if (diffDays < -2) return `לפני ${Math.abs(diffDays)} ימים`;
 
-    return "";
+    return date.toLocaleDateString("he-IL", { weekday: "long", day: "2-digit", month: "2-digit" });
 };
 
-// ---- קומפוננטת מסך ----
+// ----------------------------------------------------------------------
+// Component
+// ----------------------------------------------------------------------
 
-const Torim: React.FC = () => {
+const TorimScreen: React.FC = () => {
     const { user, userToken, isAdmin } = useAuth();
     const { businessData } = useBusinessDataContext();
 
-    const business = businessData as BusinessWithWorkers | null;
+    const business = businessData as any; // Cast for flexibility
 
+    // State
     const [selectedStaff, setSelectedStaff] = useState<Staff | null>(null);
     const [showStaffModal, setShowStaffModal] = useState(false);
 
@@ -187,211 +143,167 @@ const Torim: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [updatingId, setUpdatingId] = useState<string | null>(null);
 
-    // סטטיסטיקות כלליות
     const [stats, setStats] = useState<AdminStats | null>(null);
     const [statsLoading, setStatsLoading] = useState(false);
 
-    const relativeDayLabel = useMemo(
-        () => getRelativeDayLabel(selectedDate),
-        [selectedDate]
-    );
+    const relativeDayLabel = useMemo(() => getRelativeDayLabel(selectedDate), [selectedDate]);
 
-    // ---- בניית רשימת עובדים מה-businessData ----
+    // --- Staff Logic ---
 
     const staffOptions: Staff[] = useMemo(() => {
         if (!business) return [];
 
-        const rawWorkers = business.workers || [];
-        const owner = business.owner;
-
-        if (rawWorkers.length > 0) {
-            return rawWorkers.map((w) => ({
+        if (business.workers?.length > 0) {
+            return business.workers.map((w: any) => ({
                 id: w._id,
-                name: w.name || w.fullName || w.phone || "איש צוות",
+                name: w.name || w.fullName || "איש צוות",
             }));
         }
 
-        if (owner && owner._id) {
-            return [
-                {
-                    id: owner._id,
-                    name: owner.name || owner.fullName || business.name || "איש צוות",
-                },
-            ];
+        if (business.owner?._id) {
+            return [{
+                id: business.owner._id,
+                name: business.owner.name || "בעלים",
+            }];
         }
 
+        // Fallback: המשתמש המחובר עצמו
         if (user?._id) {
-            return [
-                {
-                    id: user._id,
-                    name:
-                        (user as any).fullName ||
-                        (user as any).name ||
-                        (user as any).email ||
-                        "איש צוות",
-                },
-            ];
+            return [{ id: user._id, name: "אני" }];
         }
 
         return [];
     }, [business, user]);
 
-    // אם יש רק עובד אחד – לבחור אותו אוטומטית
     useEffect(() => {
         if (!selectedStaff && staffOptions.length === 1) {
             setSelectedStaff(staffOptions[0]);
         }
     }, [staffOptions, selectedStaff]);
 
-    // ---- הבאת תורים של העובד ביום שנבחר ----
+    // --- Data Fetching ---
 
-    const fetchAppointments = async () => {
-        if (!userToken) return;
-        if (!selectedStaff) return;
-
-        const dateStr = dateToYMD(selectedDate);
+    const fetchAppointments = useCallback(async () => {
+        if (!userToken || !selectedStaff) return;
 
         setLoading(true);
         try {
+            const dateStr = dateToYMD(selectedDate);
             const res = await apiFetch(
-                `${API_URL}/by-day?date=${encodeURIComponent(
-                    dateStr
-                )}&worker=${encodeURIComponent(selectedStaff.id)}`,
-                {
-                    method: "GET",
-                }
+                `/appointments/by-day?date=${dateStr}&worker=${selectedStaff.id}`
             );
 
-            if (!res.ok) {
-                console.log("❌ Failed GET /appointments/by-day");
-                const txt = await res.text();
-                console.log(txt);
+            if (res.ok) {
+                const data = await res.json();
+                // מיון לפי שעה
+                const sorted = (data || []).sort((a: Appointment, b: Appointment) =>
+                    new Date(a.start).getTime() - new Date(b.start).getTime()
+                );
+                setAppointments(sorted);
+            } else {
                 setAppointments([]);
-                return;
             }
-
-            const data: Appointment[] = await res.json();
-            console.log("ADMIN by-day sample appt:", JSON.stringify(data[0], null, 2));
-            setAppointments(data || []);
         } catch (err) {
-            console.error("❌ Error fetching appointments (admin):", err);
+            console.error("Error fetching admin appointments:", err);
             setAppointments([]);
         } finally {
             setLoading(false);
         }
-    };
+    }, [userToken, selectedStaff, selectedDate]);
 
-    // ---- הבאת סטטיסטיקות כלליות ----
-
-    const fetchStats = async () => {
+    const fetchStats = useCallback(async () => {
         if (!userToken) return;
-
-        let url = `${API_URL}/admin-stats`;
-        if (selectedStaff?.id) {
-            url += `?worker=${encodeURIComponent(selectedStaff.id)}`;
-        }
 
         setStatsLoading(true);
         try {
-            const res = await apiFetch(url, { method: "GET" });
-
-            if (!res.ok) {
-                console.log("❌ Failed GET /appointments/admin-stats");
-                setStats(null);
-                return;
+            let url = "/appointments/admin-stats";
+            if (selectedStaff?.id) {
+                url += `?worker=${selectedStaff.id}`;
             }
 
-            const data: AdminStats = await res.json();
-            setStats(data);
+            const res = await apiFetch(url);
+            if (res.ok) {
+                setStats(await res.json());
+            }
         } catch (err) {
-            console.error("❌ Error fetching admin stats:", err);
-            setStats(null);
+            console.error("Error fetching stats:", err);
         } finally {
             setStatsLoading(false);
         }
-    };
-
-    // להביא תורים כל פעם שעובד או תאריך משתנים
-    useEffect(() => {
-        fetchAppointments();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [userToken, selectedStaff, selectedDate]);
-
-    // להביא סטטיסטיקות כל פעם שהעובד מתחלף / טוקן משתנה
-    useEffect(() => {
-        fetchStats();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [userToken, selectedStaff]);
 
-    // ---- שינוי סטטוס ----
+    // טעינה מחדש בשינוי פרמטרים
+    useEffect(() => {
+        fetchAppointments();
+    }, [fetchAppointments]);
+
+    useEffect(() => {
+        fetchStats();
+    }, [fetchStats]);
+
+    // --- Status Updates ---
 
     const updateStatus = async (apptId: string, status: AppointmentStatus) => {
-        setUpdatingId(apptId + ":" + status);
-
+        setUpdatingId(apptId);
         try {
-            const res = await apiFetch(`${API_URL}/${apptId}/status`, {
+            const res = await apiFetch(`/appointments/${apptId}/status`, {
                 method: "PATCH",
-                headers: {
-                    "Content-Type": "application/json",
-                },
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ status }),
             });
 
             if (!res.ok) {
-                const txt = await res.text();
-                console.log("❌ PATCH /appointments/:id/status:", res.status, txt);
-
-                let msg = "לא ניתן לעדכן את הסטטוס.";
-                try {
-                    const json = JSON.parse(txt);
-                    if (json.error === "SLOT_TAKEN") {
-                        msg = "התרחש קונפליקט בשעת התור (SLOT_TAKEN).";
-                    } else if (json.error) {
-                        msg = json.error;
-                    }
-                } catch {
-                    if (txt) msg = txt;
-                }
-
+                const json = await res.json().catch(() => ({}));
+                const msg = json.error === "SLOT_TAKEN"
+                    ? "השעה תפוסה (קונפליקט)."
+                    : (json.error || "שגיאה בעדכון");
                 Alert.alert("שגיאה", msg);
                 return;
             }
 
-            const updated: Appointment = await res.json();
+            const updatedAppt = await res.json();
+            setAppointments(prev => prev.map(a => a._id === updatedAppt._id ? updatedAppt : a));
 
-            setAppointments((prev) =>
-                prev.map((a) => (a._id === updated._id ? updated : a))
-            );
         } catch (err) {
-            console.error("❌ Error updating status:", err);
-            Alert.alert("שגיאה", "תקלה בעדכון הסטטוס.");
+            Alert.alert("שגיאה", "תקלה בתקשורת.");
         } finally {
             setUpdatingId(null);
         }
     };
 
     const confirmStatusChange = (appt: Appointment, status: AppointmentStatus) => {
+        const label = STATUS_CONFIG[status].label;
         Alert.alert(
             "שינוי סטטוס",
-            `להגדיר את התור ל"${statusLabel(status)}"?`,
+            `לשנות את הסטטוס ל"${label}"?`,
             [
                 { text: "בטל", style: "cancel" },
                 {
                     text: "אישור",
                     style: "destructive",
-                    onPress: () => updateStatus(appt._id, status),
+                    onPress: () => updateStatus(appt._id, status)
                 },
             ]
         );
     };
 
-    // ---- Render ----
+    // --- Render Helpers ---
+
+    const getClientName = (client: ClientRef | string) => {
+        if (typeof client === 'object' && client?.name) return client.name;
+        if (typeof client === 'object' && client?.phone) return client.phone;
+        return "לקוח ללא שם";
+    };
+
+    const getClientPhone = (client: ClientRef | string) => {
+        if (typeof client === 'object' && client?.phone) return client.phone;
+        return null;
+    };
 
     if (!isAdmin) {
         return (
-            <View style={styles.container}>
-                <Text style={styles.title}>ניהול תורים</Text>
-                <Text style={styles.infoText}>רק אדמין יכול לראות את המסך הזה.</Text>
+            <View style={styles.center}>
+                <Text>אין לך הרשאות צפייה במסך זה.</Text>
             </View>
         );
     }
@@ -400,493 +312,311 @@ const Torim: React.FC = () => {
         <View style={styles.container}>
             <Text style={styles.title}>ניהול תורים</Text>
 
-            {/* סטטיסטיקות כלליות */}
+            {/* Stats Cards */}
             <View style={styles.statsRow}>
                 <View style={styles.statCard}>
                     <Text style={styles.statLabel}>תורים היום</Text>
-                    {statsLoading ? (
-                        <ActivityIndicator size="small" />
-                    ) : (
-                        <Text style={styles.statValue}>
-                            {stats ? stats.todayCount : "-"}
-                        </Text>
-                    )}
+                    {statsLoading ? <ActivityIndicator size="small" /> : <Text style={styles.statValue}>{stats?.todayCount || 0}</Text>}
                 </View>
-
                 <View style={styles.statCard}>
-                    <Text style={styles.statLabel}>תורים עתידיים</Text>
-                    {statsLoading ? (
-                        <ActivityIndicator size="small" />
-                    ) : (
-                        <Text style={styles.statValue}>
-                            {stats ? stats.futureCount : "-"}
-                        </Text>
-                    )}
+                    <Text style={styles.statLabel}>עתידיים</Text>
+                    {statsLoading ? <ActivityIndicator size="small" /> : <Text style={styles.statValue}>{stats?.futureCount || 0}</Text>}
                 </View>
             </View>
 
-            {/* בחירת עובד – קודם שם, אחר כך "עובד" */}
-            <TouchableOpacity
-                style={styles.selectorRow}
-                onPress={() => {
-                    if (staffOptions.length > 0) setShowStaffModal(true);
-                }}
-                disabled={staffOptions.length === 0}
-            >
-                <Text style={styles.selectorValue}>
-                    {selectedStaff
-                        ? selectedStaff.name
-                        : staffOptions.length > 0
-                            ? staffOptions[0].name
-                            : "לא הוגדרו עובדים לעסק"}
-                </Text>
-                <Text style={styles.selectorLabel}>עובד</Text>
-            </TouchableOpacity>
+            {/* Filters */}
+            <View style={styles.filtersContainer}>
+                <TouchableOpacity style={styles.filterBtn} onPress={() => staffOptions.length > 0 && setShowStaffModal(true)}>
+                    <Text style={styles.filterLabel}>עובד</Text>
+                    <Text style={styles.filterValue}>{selectedStaff?.name || "בחר..."}</Text>
+                </TouchableOpacity>
 
-            {/* בחירת יום – קודם התאריך, אחר כך "תאריך" */}
-            <TouchableOpacity
-                style={styles.selectorRow}
-                onPress={() => setShowDateModal(true)}
-            >
-                <Text style={styles.selectorValue}>
-                    {selectedDate.toLocaleDateString("he-IL", {
-                        weekday: "long",
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "2-digit",
-                    })}
-                </Text>
-                <Text style={styles.selectorLabel}>תאריך</Text>
-            </TouchableOpacity>
+                <TouchableOpacity style={styles.filterBtn} onPress={() => setShowDateModal(true)}>
+                    <Text style={styles.filterLabel}>תאריך</Text>
+                    <Text style={styles.filterValue}>
+                        {selectedDate.toLocaleDateString("he-IL", { day: "2-digit", month: "2-digit" })}
+                    </Text>
+                </TouchableOpacity>
+            </View>
 
-            {/* כותרת שמצביעה על איזה יום מוצג */}
-            {relativeDayLabel ? (
-                <Text style={styles.dayLabel}>{relativeDayLabel}</Text>
-            ) : null}
+            {/* Day Title */}
+            <Text style={styles.dayLabel}>{relativeDayLabel}</Text>
 
-            {/* רשימת תורים */}
+            {/* List */}
             {loading ? (
-                <ActivityIndicator size="large" style={{ marginTop: 30 }} />
+                <ActivityIndicator size="large" style={{ marginTop: 40 }} color="#000" />
             ) : appointments.length === 0 ? (
-                <Text style={styles.emptyText}>אין תורים ליום הזה עבור העובד שנבחר.</Text>
+                <Text style={styles.emptyText}>אין תורים ליום זה.</Text>
             ) : (
                 <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
                     {appointments.map((appt) => {
-                        const rawClient: any = appt.client;
-
-                        const clientName =
-                            rawClient &&
-                                typeof rawClient === "object" &&
-                                (rawClient.name?.trim() || rawClient.phone)
-                                ? (rawClient.name?.trim() || rawClient.phone)
-                                : "לקוח ללא שם";
-
-                        const clientPhone =
-                            rawClient &&
-                                typeof rawClient === "object" &&
-                                rawClient.phone
-                                ? rawClient.phone
-                                : undefined;
+                        const statusConf = STATUS_CONFIG[appt.status];
+                        const clientName = getClientName(appt.client);
+                        const clientPhone = getClientPhone(appt.client);
 
                         return (
                             <View key={appt._id} style={styles.card}>
-                                {/* כותרת הכרטיסייה – שעה (ימין) + שירות (שמאל) */}
-                                <View style={styles.cardHeaderRow}>
+
+                                {/* Header: Time & Service */}
+                                <View style={styles.cardHeader}>
                                     <Text style={styles.cardTime}>
-                                        {formatTimeRange(
-                                            appt.start,
-                                            appt.service.duration
-                                        )}
+                                        {formatTimeRange(appt.start, appt.service.duration)}
                                     </Text>
                                     <Text style={styles.cardTitle}>{appt.service.name}</Text>
                                 </View>
 
-                                {/* שם הלקוח */}
-                                <Text style={styles.cardClient}>
-                                    <Text style={styles.cardLabel}>לקוח: </Text>
-                                    {clientName}
-                                </Text>
+                                {/* Client Info */}
+                                <Text style={styles.cardClient}>👤 {clientName}</Text>
+                                {clientPhone && <Text style={styles.cardClient}>📞 {clientPhone}</Text>}
 
-                                {/* טלפון הלקוח (רק אם קיים) */}
-                                {clientPhone && (
-                                    <Text style={styles.cardClient}>
-                                        <Text style={styles.cardLabel}>טלפון: </Text>
-                                        {clientPhone}
-                                    </Text>
-                                )}
-
-                                {/* שורה תחתונה – כפתורים (שמאל) + סטטוס (ימין) */}
-                                <View style={styles.statusRow}>
-                                    <View style={styles.statusButtonsRow}>
-                                        {(["completed", "no_show"] as AppointmentStatus[]).map(
-                                            (status) => {
-                                                const isCurrent = appt.status === status;
-                                                const key = appt._id + ":" + status;
-                                                const isLoading = updatingId === key;
-
-                                                return (
-                                                    <TouchableOpacity
-                                                        key={status}
-                                                        style={[
-                                                            styles.statusButton,
-                                                            isCurrent &&
-                                                            styles.statusButtonActive,
-                                                        ]}
-                                                        onPress={() =>
-                                                            !isCurrent &&
-                                                            !isLoading &&
-                                                            confirmStatusChange(
-                                                                appt,
-                                                                status
-                                                            )
-                                                        }
-                                                        disabled={isCurrent || isLoading}
-                                                    >
-                                                        {isLoading ? (
-                                                            <ActivityIndicator size="small" />
-                                                        ) : (
-                                                            <Text
-                                                                style={[
-                                                                    styles.statusButtonText,
-                                                                    isCurrent &&
-                                                                    styles
-                                                                        .statusButtonTextActive,
-                                                                ]}
-                                                            >
-                                                                {statusLabel(status)}
-                                                            </Text>
-                                                        )}
-                                                    </TouchableOpacity>
-                                                );
-                                            }
-                                        )}
+                                {/* Actions */}
+                                <View style={styles.actionsRow}>
+                                    {/* Status Actions */}
+                                    <View style={styles.buttonsContainer}>
+                                        {(['completed', 'no_show'] as AppointmentStatus[]).map(s => {
+                                            const isSelected = appt.status === s;
+                                            return (
+                                                <TouchableOpacity
+                                                    key={s}
+                                                    style={[styles.actionBtn, isSelected && styles.actionBtnActive]}
+                                                    onPress={() => !isSelected && confirmStatusChange(appt, s)}
+                                                    disabled={isSelected || updatingId === appt._id}
+                                                >
+                                                    <Text style={[styles.actionBtnText, isSelected && { color: '#fff' }]}>
+                                                        {STATUS_CONFIG[s].label}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            );
+                                        })}
                                     </View>
 
-                                    <View
-                                        style={[
-                                            styles.statusPill,
-                                            {
-                                                backgroundColor:
-                                                    statusColor(appt.status) + "20",
-                                            },
-                                        ]}
-                                    >
-                                        <Text
-                                            style={[
-                                                styles.statusPillText,
-                                                { color: statusColor(appt.status) },
-                                            ]}
-                                        >
-                                            {statusLabel(appt.status)}
+                                    {/* Current Status Badge */}
+                                    <View style={[styles.statusBadge, { backgroundColor: statusConf.color + '20' }]}>
+                                        <Text style={[styles.statusText, { color: statusConf.color }]}>
+                                            {statusConf.label}
                                         </Text>
                                     </View>
                                 </View>
+
                             </View>
                         );
                     })}
                 </ScrollView>
             )}
 
-            {/* ---- מודל בחירת עובד ---- */}
-            <Modal visible={showStaffModal} transparent animationType="slide">
+            {/* --- Modals --- */}
+
+            {/* Staff Modal */}
+            <Modal visible={showStaffModal} transparent animationType="slide" onRequestClose={() => setShowStaffModal(false)}>
                 <View style={styles.modalBackdrop}>
                     <View style={styles.modalCard}>
-                        <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>בחירת עובד</Text>
-                            <TouchableOpacity onPress={() => setShowStaffModal(false)}>
-                                <Text style={styles.closeText}>✕</Text>
+                        <Text style={styles.modalTitle}>בחירת עובד</Text>
+                        {staffOptions.map(s => (
+                            <TouchableOpacity key={s.id} style={styles.modalItem} onPress={() => {
+                                setSelectedStaff(s);
+                                setShowStaffModal(false);
+                            }}>
+                                <Text style={styles.modalItemText}>{s.name}</Text>
                             </TouchableOpacity>
-                        </View>
-
-                        {staffOptions.length === 0 ? (
-                            <Text style={styles.emptyText}>אין עובדים מוגדרים לעסק.</Text>
-                        ) : (
-                            staffOptions.map((staff) => (
-                                <TouchableOpacity
-                                    key={staff.id}
-                                    style={styles.chip}
-                                    onPress={() => {
-                                        setSelectedStaff(staff);
-                                        setShowStaffModal(false);
-                                    }}
-                                >
-                                    <Text style={styles.chipText}>{staff.name}</Text>
-                                </TouchableOpacity>
-                            ))
-                        )}
+                        ))}
                     </View>
                 </View>
             </Modal>
 
-            {/* ---- מודל בחירת יום (CalendarList) ---- */}
-            <Modal visible={showDateModal} transparent animationType="slide">
+            {/* Date Modal */}
+            <Modal visible={showDateModal} transparent animationType="slide" onRequestClose={() => setShowDateModal(false)}>
                 <View style={styles.modalBackdrop}>
-                    <View style={[styles.modalCard, { height: "80%" }]}>
-                        <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>בחירת יום</Text>
-                            <TouchableOpacity onPress={() => setShowDateModal(false)}>
-                                <Text style={styles.closeText}>✕</Text>
-                            </TouchableOpacity>
-                        </View>
-
+                    <View style={[styles.modalCard, { height: '70%' }]}>
                         <CalendarList
-                            onDayPress={(day: CalendarDay) => {
-                                const d = new Date(day.dateString);
-                                setSelectedDate(d);
+                            current={dateToYMD(selectedDate)}
+                            onDayPress={(day: any) => {
+                                setSelectedDate(new Date(day.dateString));
                                 setShowDateModal(false);
                             }}
-                            minDate={dateToYMD(new Date(2024, 0, 1))}
                             pastScrollRange={12}
                             futureScrollRange={12}
-                            scrollEnabled
-                            showScrollIndicator
                             theme={{
-                                todayTextColor: "#1d4ed8",
-                                selectedDayBackgroundColor: "#1d4ed8",
+                                selectedDayBackgroundColor: '#111',
+                                todayTextColor: '#111',
                             }}
-                            markedDates={
-                                {
-                                    [dateToYMD(selectedDate)]: {
-                                        selected: true,
-                                        selectedColor: "#1d4ed8",
-                                    },
-                                } as any
-                            }
+                            markedDates={{
+                                [dateToYMD(selectedDate)]: { selected: true, selectedColor: '#111' }
+                            }}
                         />
                     </View>
                 </View>
             </Modal>
+
         </View>
     );
 };
 
-export default Torim;
+export default TorimScreen;
 
-// ---- Styles ----
+// ----------------------------------------------------------------------
+// Styles
+// ----------------------------------------------------------------------
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        padding: 16,
         backgroundColor: "#f3f4f6",
+        padding: 16,
+    },
+    center: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center'
     },
     title: {
-        fontSize: 22,
+        fontSize: 24,
         fontWeight: "700",
         textAlign: "center",
         marginBottom: 16,
-    },
-    infoText: {
-        fontSize: 14,
-        color: "#4b5563",
-        textAlign: "center",
+        color: "#111",
     },
 
-    // סטטיסטיקות בראש המסך
+    // Stats
     statsRow: {
         flexDirection: "row",
-        justifyContent: "space-between",
-        marginBottom: 12,
+        gap: 12,
+        marginBottom: 16,
     },
     statCard: {
         flex: 1,
-        backgroundColor: "#ffffff",
-        borderRadius: 16,
-        paddingVertical: 10,
-        paddingHorizontal: 14,
-        marginHorizontal: 4,
-        shadowColor: "#000",
-        shadowOpacity: 0.04,
-        shadowRadius: 4,
-        elevation: 1,
+        backgroundColor: "#fff",
+        padding: 12,
+        borderRadius: 12,
         alignItems: "center",
-        justifyContent: "center",
-    },
-    statLabel: {
-        fontSize: 12,
-        color: "#6b7280",
-        marginBottom: 4,
-    },
-    statValue: {
-        fontSize: 20,
-        fontWeight: "700",
-        color: "#111827",
-    },
-
-    // כותרת יחסית ליום
-    dayLabel: {
-        fontSize: 20,
-        fontWeight: "600",
-        textAlign: "center",
-        color: "#4b5563",
-        marginTop: 18,      // ⭐ מרווח מלמעלה
-        marginBottom: 10,   // כבר קיים
-    },
-
-    selectorRow: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        backgroundColor: "#ffffff",
-        borderRadius: 20,
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        marginBottom: 10,
-        shadowColor: "#000",
-        shadowOpacity: 0.04,
-        shadowRadius: 6,
         elevation: 2,
     },
-    selectorLabel: {
-        fontSize: 14,
-        color: "#6b7280",
-    },
-    selectorValue: {
-        fontSize: 16,
-        fontWeight: "600",
-    },
+    statLabel: { fontSize: 12, color: "#6b7280" },
+    statValue: { fontSize: 20, fontWeight: "700", color: "#111" },
 
-    emptyText: {
-        textAlign: "center",
-        color: "#6b7280",
-        marginTop: 24,
-        fontSize: 15,
+    // Filters
+    filtersContainer: {
+        flexDirection: 'row',
+        gap: 10,
+        marginBottom: 16,
     },
-
-    card: {
-        backgroundColor: "#ffffff",
-        padding: 16,
-        borderRadius: 16,
-        marginBottom: 12,
-        shadowColor: "#000",
-        shadowOpacity: 0.04,
-        shadowRadius: 4,
+    filterBtn: {
+        flex: 1,
+        backgroundColor: "#fff",
+        padding: 12,
+        borderRadius: 12,
+        flexDirection: 'row-reverse', // Label right, value left
+        justifyContent: 'space-between',
+        alignItems: 'center',
         elevation: 1,
-        borderColor: "black",
-        borderWidth: 1,
     },
+    filterLabel: { fontSize: 12, color: "#6b7280" },
+    filterValue: { fontSize: 14, fontWeight: "600" },
 
-    // כותרת הכרטיסייה – שעה (ימין) + שירות (שמאל)
-    cardHeaderRow: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        marginBottom: 8,
-        borderBottomColor: "black",
-        borderBottomWidth: 1,
-        paddingBottom: 4,
-    },
-
-    // שירות (שמאל)
-    cardTitle: {
+    dayLabel: {
+        textAlign: 'center',
         fontSize: 18,
-        fontWeight: "700",
-        textAlign: "left",
-        flexShrink: 1,
-        marginLeft: 8,
-    },
-
-    // שעה – ימין
-    cardTime: {
-        fontSize: 18,
-        fontWeight: "700",
-        textAlign: "right",
-    },
-
-    // לייבל קטן לפני ערך (לקוח / טלפון)
-    cardLabel: {
-        fontWeight: "700",
-    },
-
-    // שורה ללקוח / טלפון
-    cardClient: {
-        fontSize: 14,
+        fontWeight: '600',
+        marginBottom: 12,
         color: "#374151",
-        marginBottom: 2,
-        textAlign: "right",
+    },
+    emptyText: {
+        textAlign: 'center',
+        marginTop: 40,
+        color: "#9ca3af",
     },
 
-    // שורה תחתונה – כפתורים (שמאל) + סטטוס (ימין)
-    statusRow: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        marginTop: 10,
+    // Appointment Card
+    card: {
+        backgroundColor: "#fff",
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 12,
+        elevation: 2,
+        shadowColor: "#000",
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+    },
+    cardHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: "#f3f4f6",
+        paddingBottom: 8,
+    },
+    cardTime: { fontSize: 16, fontWeight: "700" },
+    cardTitle: { fontSize: 16, fontWeight: "600", color: "#374151" },
+
+    cardClient: {
+        textAlign: 'right',
+        fontSize: 14,
+        color: "#4b5563",
+        marginBottom: 4,
     },
 
-    statusPill: {
-        borderRadius: 999,
-        paddingHorizontal: 10,
+    actionsRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: 12,
+    },
+    buttonsContainer: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    actionBtn: {
+        paddingVertical: 6,
+        paddingHorizontal: 12,
+        borderRadius: 8,
+        backgroundColor: "#f3f4f6",
+        borderWidth: 1,
+        borderColor: "#e5e7eb",
+    },
+    actionBtnActive: {
+        backgroundColor: "#111",
+        borderColor: "#111",
+    },
+    actionBtnText: {
+        fontSize: 12,
+        fontWeight: "600",
+        color: "#374151",
+    },
+
+    statusBadge: {
         paddingVertical: 4,
+        paddingHorizontal: 8,
+        borderRadius: 6,
     },
-    statusPillText: {
+    statusText: {
         fontSize: 12,
         fontWeight: "700",
     },
 
-    statusButtonsRow: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-    } as any,
-    statusButton: {
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: "#e5e7eb",
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        marginLeft: 8,
-        backgroundColor: "#f9fafb",
-    },
-    statusButtonActive: {
-        backgroundColor: "#1d4ed8",
-        borderColor: "#1d4ed8",
-    },
-    statusButtonText: {
-        fontSize: 13,
-        color: "#111827",
-        fontWeight: "600",
-    },
-    statusButtonTextActive: {
-        color: "#ffffff",
-    },
-
+    // Modal
     modalBackdrop: {
         flex: 1,
-        backgroundColor: "rgba(0,0,0,0.2)",
-        justifyContent: "flex-end",
+        backgroundColor: "rgba(0,0,0,0.3)",
+        justifyContent: 'flex-end',
     },
     modalCard: {
         backgroundColor: "#fff",
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
-        paddingHorizontal: 16,
-        paddingTop: 16,
-        paddingBottom: 32,
-        minHeight: "45%",
-    },
-    modalHeader: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        marginBottom: 16,
+        padding: 20,
     },
     modalTitle: {
+        textAlign: 'center',
         fontSize: 18,
-        fontWeight: "700",
+        fontWeight: 'bold',
+        marginBottom: 20,
     },
-    closeText: {
-        fontSize: 18,
+    modalItem: {
+        paddingVertical: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: "#f3f4f6",
     },
-    chip: {
-        borderRadius: 999,
-        backgroundColor: "#f9fafb",
-        paddingVertical: 10,
-        paddingHorizontal: 16,
-        marginBottom: 10,
-        alignItems: "flex-end",
-    },
-    chipText: {
-        fontSize: 15,
+    modalItemText: {
+        fontSize: 16,
+        textAlign: 'center',
     },
 });

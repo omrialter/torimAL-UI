@@ -1,8 +1,5 @@
-// app/admin/settings/WorkersSettingsSection.tsx
-import { useAuth } from "@/contexts/AuthContext";
-import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
-import { URL } from "@/services/api";
-import { Ionicons } from "@expo/vector-icons"; // וודא שיש לך expo-vector-icons, או תחליף באייקון אחר
+// app/admin/settings/EmployeesSettingsSection.tsx
+import { Ionicons } from "@expo/vector-icons";
 import React, { useState } from "react";
 import {
     ActivityIndicator,
@@ -16,13 +13,33 @@ import {
     View,
 } from "react-native";
 
-export default function WorkersSettingsSection() {
-    const { businessData, colors, refetch } = useBusinessDataContext();
-    const { userToken } = useAuth();
+import { useAuth } from "@/contexts/AuthContext";
+import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
+import { apiDelete, apiPost } from "@/services/api"; // שימוש ב-Service
 
-    const business = (businessData || {}) as any;
+// ----------------------------------------------------------------------
+// Types
+// ----------------------------------------------------------------------
+
+interface Worker {
+    _id: string;
+    name: string;
+    phone: string;
+    avatarUrl?: string;
+}
+
+// ----------------------------------------------------------------------
+// Component
+// ----------------------------------------------------------------------
+
+export default function EmployeesSettingsSection() {
+    const { businessData, colors, refetch } = useBusinessDataContext();
+    const { userToken } = useAuth(); // למקרה שצריך אותו, למרות שה-api wrappers מטפלים בזה
+
+    // המרה בטוחה יותר לטיפוס
+    const business = businessData as any;
     const businessId = business?._id;
-    const workers = business.workers || [];
+    const workers: Worker[] = business?.workers || [];
 
     const colorsSafe = {
         primary: colors?.primary ?? "#1d4ed8",
@@ -30,15 +47,14 @@ export default function WorkersSettingsSection() {
         third: colors?.third ?? "#0b1120",
     };
 
-    // --- State להוספת עובד ---
+    // State
     const [modalVisible, setModalVisible] = useState(false);
     const [newWorkerPhone, setNewWorkerPhone] = useState("");
     const [addingWorker, setAddingWorker] = useState(false);
-
-    // --- State למחיקת עובד ---
     const [deletingWorkerId, setDeletingWorkerId] = useState<string | null>(null);
 
-    // פונקציה להוספת עובד
+    // --- Handlers ---
+
     const handleAddWorker = async () => {
         if (!newWorkerPhone.trim()) {
             Alert.alert("שגיאה", "נא להזין מספר טלפון.");
@@ -48,44 +64,28 @@ export default function WorkersSettingsSection() {
         setAddingWorker(true);
 
         try {
-            const res = await fetch(`${URL}/businesses/${businessId}/workers`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "x-api-key": userToken || "",
-                },
-                body: JSON.stringify({ phone: newWorkerPhone }),
-            });
+            // שימוש ב-apiPost במקום fetch ישיר
+            const res = await apiPost(
+                `/businesses/${businessId}/workers`,
+                { phone: newWorkerPhone }
+            );
 
-            const rawText = await res.text();
-
-            if (!res.ok) {
-                // ננסה לחלץ הודעת שגיאה מסודרת
-                let errorMsg = "לא ניתן להוסיף עובד.";
-                try {
-                    const jsonErr = JSON.parse(rawText);
-                    if (jsonErr.msg) errorMsg = jsonErr.msg;
-                } catch { }
-
-                Alert.alert("שגיאה", errorMsg);
-                return;
-            }
-
-            // הצלחה
+            // apiPost זורק שגיאה אם הסטטוס לא תקין, כך שאם הגענו לפה - הכל בסדר
             await refetch();
             setNewWorkerPhone("");
             setModalVisible(false);
             Alert.alert("הצלחה", "העובד נוסף בהצלחה לעסק.");
 
-        } catch (err) {
-            console.log("Add worker error:", err);
-            Alert.alert("שגיאה", "תקלת תקשורת.");
+        } catch (err: any) {
+            console.error("Add worker error:", err);
+            // חילוץ הודעת שגיאה מהמנגנון של ה-Service
+            const msg = err.payload?.msg || err.payload?.error || err.message || "לא ניתן להוסיף עובד.";
+            Alert.alert("שגיאה", msg);
         } finally {
             setAddingWorker(false);
         }
     };
 
-    // פונקציה למחיקת עובד
     const handleRemoveWorker = (workerId: string, workerName: string) => {
         Alert.alert(
             "מחיקת עובד",
@@ -96,24 +96,14 @@ export default function WorkersSettingsSection() {
                     text: "הסר",
                     style: "destructive",
                     onPress: async () => {
+                        setDeletingWorkerId(workerId);
                         try {
-                            setDeletingWorkerId(workerId);
-                            const res = await fetch(`${URL}/businesses/${businessId}/workers/${workerId}`, {
-                                method: "DELETE",
-                                headers: {
-                                    "x-api-key": userToken || "",
-                                },
-                            });
-
-                            if (!res.ok) {
-                                Alert.alert("שגיאה", "לא ניתן למחוק את העובד.");
-                                return;
-                            }
-
+                            // שימוש ב-apiDelete
+                            await apiDelete(`/businesses/${businessId}/workers/${workerId}`);
                             await refetch();
-                        } catch (err) {
-                            console.log("Remove worker error:", err);
-                            Alert.alert("שגיאה", "תקלת תקשורת.");
+                        } catch (err: any) {
+                            console.error("Remove worker error:", err);
+                            Alert.alert("שגיאה", "לא ניתן למחוק את העובד.");
                         } finally {
                             setDeletingWorkerId(null);
                         }
@@ -132,15 +122,16 @@ export default function WorkersSettingsSection() {
                 הוסף עובדים לעסק כדי שיוכלו לנהל יומן, לקבל תורים ולראות נתונים.
             </Text>
 
-            {/* רשימת עובדים */}
+            {/* Workers List */}
             <View style={styles.listContainer}>
                 {workers.length === 0 ? (
                     <Text style={styles.emptyText}>אין עובדים משויכים לעסק כרגע.</Text>
                 ) : (
-                    workers.map((worker: any) => (
+                    workers.map((worker) => (
                         <View key={worker._id} style={styles.workerRow}>
+
                             <View style={styles.workerInfo}>
-                                {/* אוואטר */}
+                                {/* Avatar */}
                                 {worker.avatarUrl ? (
                                     <Image
                                         source={{ uri: worker.avatarUrl }}
@@ -154,14 +145,14 @@ export default function WorkersSettingsSection() {
                                     </View>
                                 )}
 
-                                {/* פרטים */}
+                                {/* Details */}
                                 <View>
                                     <Text style={styles.workerName}>{worker.name}</Text>
                                     <Text style={styles.workerPhone}>{worker.phone}</Text>
                                 </View>
                             </View>
 
-                            {/* כפתור מחיקה */}
+                            {/* Delete Button */}
                             <TouchableOpacity
                                 onPress={() => handleRemoveWorker(worker._id, worker.name)}
                                 style={styles.deleteButton}
@@ -178,7 +169,7 @@ export default function WorkersSettingsSection() {
                 )}
             </View>
 
-            {/* כפתור הוספת עובד */}
+            {/* Add Button */}
             <TouchableOpacity
                 style={[styles.actionButton, { backgroundColor: colorsSafe.primary }]}
                 onPress={() => setModalVisible(true)}
@@ -186,7 +177,7 @@ export default function WorkersSettingsSection() {
                 <Text style={styles.actionButtonText}>הוספת עובד חדש +</Text>
             </TouchableOpacity>
 
-            {/* מודאל הוספה */}
+            {/* Add Modal */}
             <Modal
                 visible={modalVisible}
                 transparent
@@ -198,7 +189,7 @@ export default function WorkersSettingsSection() {
                         <Text style={styles.modalTitle}>הוספת עובד</Text>
                         <Text style={styles.modalSubtitle}>
                             הזן את מספר הטלפון של המשתמש שברצונך להוסיף כעובד.
-                            (המשתמש חייב להיות רשום לאפליקציה)
+                            {"\n"}(המשתמש חייב להיות רשום לאפליקציה)
                         </Text>
 
                         <TextInput
@@ -222,7 +213,10 @@ export default function WorkersSettingsSection() {
                             </TouchableOpacity>
 
                             <TouchableOpacity
-                                style={[styles.modalButton, { backgroundColor: colorsSafe.primary }]}
+                                style={[
+                                    styles.modalButton,
+                                    { backgroundColor: colorsSafe.primary },
+                                ]}
                                 onPress={handleAddWorker}
                                 disabled={addingWorker}
                             >
@@ -279,7 +273,7 @@ const styles = StyleSheet.create({
         marginVertical: 10,
     },
     workerRow: {
-        flexDirection: "row-reverse", // RTL
+        flexDirection: "row-reverse",
         alignItems: "center",
         justifyContent: "space-between",
         padding: 10,

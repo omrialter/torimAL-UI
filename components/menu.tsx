@@ -1,6 +1,5 @@
-import { useBusinessDataContext } from "@/contexts/BusinessDataContext"; // או הנתיב הנכון שלך
-import { useUserDataContext } from "@/contexts/UserDataContext";
-import { Link, usePathname } from "expo-router";
+// components/menu.tsx
+import { Link, usePathname, useRouter } from "expo-router";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
     Animated,
@@ -13,7 +12,14 @@ import {
     View,
     ViewStyle,
 } from "react-native";
-import { useAuth } from "../contexts/AuthContext";
+
+import { useAuth } from "@/contexts/AuthContext";
+import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
+import { useUserDataContext } from "@/contexts/UserDataContext";
+
+// ----------------------------------------------------------------------
+// Types
+// ----------------------------------------------------------------------
 
 type RenderProp = (toggleDrawer: () => void) => React.ReactNode;
 
@@ -22,22 +28,39 @@ type Props = {
     style?: StyleProp<ViewStyle>;
 };
 
+// הגדרת טיפוס מינימלי למשתמש כדי למנוע שגיאות TS
+type MenuUser = {
+    name?: string;
+    [key: string]: any;
+};
+
+// ----------------------------------------------------------------------
+// Constants
+// ----------------------------------------------------------------------
+
 const SCREEN_WIDTH = Dimensions.get("window").width;
+// רוחב התפריט (70% מהמסך)
 const DRAWER_WIDTH = Math.round(SCREEN_WIDTH * 0.7);
 
+// ----------------------------------------------------------------------
+// Component
+// ----------------------------------------------------------------------
+
 export default function Menu({ children, style }: Props) {
+    const router = useRouter();
     const pathname = usePathname();
+
+    // בדיקה האם אנחנו במסכי אותנטיקציה (שם אין תפריט)
     const isAuthScreen = pathname === "/login" || pathname === "/signup";
 
     const { userData } = useUserDataContext();
     const { logout, isAdmin } = useAuth();
 
-    // ✅ תיקון 1: הקריאה להוק חייבת להיות כאן, בתוך הקומפוננטה
-    const { businessData } = useBusinessDataContext();
+    // שימוש ב-colors שכבר חולץ ב-Hook (פותר את שגיאת ה-Types)
+    const { colors } = useBusinessDataContext();
+    const primaryColor = colors.primary;
 
-    // שליפת הצבע מהמידע שהגיע (עם גיבוי לצבע זהב אם הנתונים טרם נטענו)
-    const primaryColor = businessData?.business_colors?.primary || "#FFD700";
-
+    // אנימציה
     const translateX = useRef(new Animated.Value(DRAWER_WIDTH)).current;
     const [open, setOpen] = useState(false);
 
@@ -60,6 +83,7 @@ export default function Menu({ children, style }: Props) {
 
     const closeDrawer = useCallback(() => {
         animateTo(DRAWER_WIDTH);
+        // מחכים שהאנימציה תסתיים לפני שמשנים את ה-State
         setTimeout(() => setOpen(false), 250);
     }, [animateTo]);
 
@@ -68,10 +92,23 @@ export default function Menu({ children, style }: Props) {
         open ? closeDrawer() : openDrawer();
     }, [open, openDrawer, closeDrawer, isAuthScreen]);
 
+    // Render Props
     const content = useMemo(() => children(toggleDrawer), [children, toggleDrawer]);
 
-    // ✅ תיקון 2: יצירת סטייל דינמי שמשתמש במשתנה
-    const dynamicLinkStyle = [styles.adminLink, { color: primaryColor }];
+    // טיפול ביציאה מהמערכת
+    const handleLogout = async () => {
+        await logout();
+        closeDrawer();
+        // router.replace("/login"); // לרוב ה-AuthContext כבר יזרוק אותנו החוצה, אבל ליתר ביטחון
+    };
+
+    // עיצוב דינמי ללינקים של האדמין
+    const dynamicAdminLinkStyle = useMemo(() => {
+        return [styles.adminLink, { color: primaryColor }];
+    }, [primaryColor]);
+
+    // המרת המידע לטיפוס המוכר כדי למנוע שגיאות
+    const user = userData as MenuUser | null;
 
     return (
         <View style={[{ flex: 1 }, style]}>
@@ -82,11 +119,10 @@ export default function Menu({ children, style }: Props) {
                         { transform: [{ translateX }] },
                     ]}
                 >
+                    {/* --- Header Row (Close + Name) --- */}
                     <View style={styles.headerRow}>
                         <TouchableOpacity
                             onPress={closeDrawer}
-                            accessibilityRole="button"
-                            accessibilityLabel="Close menu"
                             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                             style={styles.closeBtn}
                         >
@@ -94,10 +130,11 @@ export default function Menu({ children, style }: Props) {
                         </TouchableOpacity>
 
                         <Text style={styles.section}>
-                            ברוך הבא, {userData?.name}
+                            {user?.name ? `ברוך הבא, ${user.name}` : "ברוך הבא"}
                         </Text>
                     </View>
 
+                    {/* --- Navigation Links --- */}
                     <View style={{ marginTop: 20 }}>
                         <Link href="/" style={styles.link} onPress={closeDrawer}>
                             🏠 בית
@@ -108,37 +145,41 @@ export default function Menu({ children, style }: Props) {
                         <Link href="/torList" style={styles.link} onPress={closeDrawer}>
                             התורים שלך
                         </Link>
-                        <Link href="/" style={styles.link} onPress={closeDrawer}>
+                        <Link href="/notifications" style={styles.link} onPress={closeDrawer}>
                             התראות
                         </Link>
 
+                        {/* --- Admin Section --- */}
                         {isAdmin && (
                             <View style={styles.adminSection}>
                                 <View style={styles.divider} />
-
                                 <Text style={styles.adminHeader}>ניהול מערכת</Text>
 
-                                {/* שימוש בסטייל הדינמי */}
-                                <Link href="/admin/bi_page" style={dynamicLinkStyle} onPress={closeDrawer}>
+                                <Link href="/admin/bi_page" style={dynamicAdminLinkStyle} onPress={closeDrawer}>
                                     <Text style={styles.adminIcon}>📊</Text> נתוני עסק
                                 </Link>
-                                <Link href="/admin/torim" style={dynamicLinkStyle} onPress={closeDrawer}>
+                                <Link href="/admin/torim" style={dynamicAdminLinkStyle} onPress={closeDrawer}>
                                     <Text style={styles.adminIcon}>📅</Text> ניהול תורים
                                 </Link>
-                                <Link href="/admin/settings" style={dynamicLinkStyle} onPress={closeDrawer}>
+                                <Link href="/admin/settings" style={dynamicAdminLinkStyle} onPress={closeDrawer}>
                                     <Text style={styles.adminIcon}>⚙️</Text> הגדרות
                                 </Link>
                             </View>
                         )}
                     </View>
 
-                    <View style={styles.logoutBtn}>
-                        {/* שימוש בצבע גם לכפתור */}
-                        <Button title="Log out" onPress={() => logout()} color={primaryColor} />
+                    {/* --- Logout Button --- */}
+                    <View style={styles.logoutContainer}>
+                        <Button
+                            title="התנתק"
+                            onPress={handleLogout}
+                            color={primaryColor}
+                        />
                     </View>
                 </Animated.View>
             )}
 
+            {/* --- Overlay (Click outside to close) --- */}
             {open && !isAuthScreen && (
                 <TouchableOpacity
                     style={styles.overlay}
@@ -147,6 +188,7 @@ export default function Menu({ children, style }: Props) {
                 />
             )}
 
+            {/* --- Main Content Injection --- */}
             {content}
         </View>
     );
@@ -164,6 +206,12 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         zIndex: 999,
         alignItems: "stretch",
+        // צל להפרדה מהרקע
+        shadowColor: "#000",
+        shadowOffset: { width: -2, height: 0 },
+        shadowOpacity: 0.5,
+        shadowRadius: 10,
+        elevation: 10,
     },
     headerRow: {
         flexDirection: "row",
@@ -175,8 +223,9 @@ const styles = StyleSheet.create({
         color: "#888",
         fontSize: 14,
         letterSpacing: 1,
-        textTransform: "uppercase",
+        // textTransform: "uppercase", // לא תמיד נראה טוב בעברית
         textAlign: "right",
+        writingDirection: "rtl", // חשוב לעברית
     },
     closeBtn: {
         marginLeft: 12,
@@ -193,6 +242,7 @@ const styles = StyleSheet.create({
         fontSize: 18,
         marginVertical: 12,
         textAlign: "right",
+        writingDirection: "rtl",
     },
     adminSection: {
         marginTop: 20,
@@ -202,7 +252,7 @@ const styles = StyleSheet.create({
         height: 1,
         backgroundColor: "#333",
         marginVertical: 15,
-        width: '100%',
+        width: "100%",
     },
     adminHeader: {
         color: "#8E8E93",
@@ -213,23 +263,23 @@ const styles = StyleSheet.create({
         letterSpacing: 1,
         opacity: 0.8,
     },
-    // ✅ תיקון 3: הסרנו את הצבע מפה כי הוא מגיע דינמית
     adminLink: {
         fontSize: 16,
         marginVertical: 10,
         textAlign: "right",
         fontWeight: "500",
+        writingDirection: "rtl",
     },
     adminIcon: {
         fontSize: 14,
     },
     overlay: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: "rgba(0,0,0,0.4)",
+        backgroundColor: "rgba(0,0,0,0.5)", // קצת יותר כהה
         zIndex: 5,
     },
-    logoutBtn: {
-        flex: 1,
-        justifyContent: "space-evenly",
+    logoutContainer: {
+        marginTop: "auto", // דוחף את הכפתור לתחתית
+        marginBottom: 40,  // מרווח מהקצה התחתון
     },
 });

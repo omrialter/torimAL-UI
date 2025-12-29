@@ -11,40 +11,46 @@ import {
 } from "react-native";
 
 import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
-import { URL, apiFetch } from "@/services/api";
+import { apiDelete, apiPatch, apiPost } from "@/services/api";
 
-type Service = {
+// ----------------------------------------------------------------------
+// Types
+// ----------------------------------------------------------------------
+
+interface Service {
     _id: string;
     name: string;
-    duration: number | string;
-    price: number | string;
-};
+    duration: number;
+    price: number;
+}
 
-type FormState = {
+interface FormState {
     name: string;
     duration: string;
     price: string;
-};
+}
+
+// ----------------------------------------------------------------------
+// Component
+// ----------------------------------------------------------------------
 
 export default function ServicesSettingsSection() {
     const { businessData, loading, refetch } = useBusinessDataContext();
 
-    const [form, setForm] = useState<FormState>({
-        name: "",
-        duration: "",
-        price: "",
-    });
+    // המרה בטוחה
+    const business = (businessData || {}) as any;
+    const services: Service[] = useMemo(() => business.services || [], [business.services]);
+    const businessId = business._id;
 
+    // Form State
+    const [form, setForm] = useState<FormState>({ name: "", duration: "", price: "" });
     const [editingId, setEditingId] = useState<string | null>(null);
+
+    // Loading States
     const [saving, setSaving] = useState(false);
     const [deletingId, setDeletingId] = useState<string | null>(null);
 
-    const services: Service[] = useMemo(
-        () => ((businessData as any)?.services as Service[]) || [],
-        [businessData]
-    );
-
-    const businessId = (businessData as any)?._id as string | undefined;
+    // --- Helpers ---
 
     const onChangeField = (key: keyof FormState, value: string) => {
         setForm((prev) => ({ ...prev, [key]: value }));
@@ -73,11 +79,11 @@ export default function ServicesSettingsSection() {
         const durationNum = Number(form.duration);
         const priceNum = Number(form.price);
 
-        if (Number.isNaN(durationNum) || durationNum <= 0) {
+        if (isNaN(durationNum) || durationNum <= 0) {
             Alert.alert("שגיאה", "משך השירות (בדקות) חייב להיות מספר גדול מ-0");
             return false;
         }
-        if (Number.isNaN(priceNum) || priceNum < 0) {
+        if (isNaN(priceNum) || priceNum < 0) {
             Alert.alert("שגיאה", "מחיר חייב להיות מספר גדול או שווה ל-0");
             return false;
         }
@@ -85,78 +91,36 @@ export default function ServicesSettingsSection() {
         return true;
     };
 
+    // --- Handlers ---
+
     const handleSave = async () => {
-        if (!businessId) {
-            console.warn("❌ handleSave: missing businessId");
-            return;
-        }
+        if (!businessId) return;
         if (!validateForm()) return;
 
+        setSaving(true);
+
+        const payload = {
+            name: form.name.trim(),
+            duration: Number(form.duration),
+            price: Number(form.price),
+        };
+
         try {
-            setSaving(true);
-
-            const durationNum = Number(form.duration);
-            const priceNum = Number(form.price);
-
             if (editingId) {
-                // עדכון שירות קיים
-                const body: any = {};
-                if (form.name.trim() !== "") body.name = form.name.trim();
-                body.duration = durationNum;
-                body.price = priceNum;
-
-                const url = `${URL}/businesses/${businessId}/services/${editingId}`;
-                console.log("📝 PATCH service →", url, body);
-
-                const res = await apiFetch(url, {
-                    method: "PATCH",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify(body),
-                });
-
-                const text = await res.text();
-                console.log("📝 PATCH service response:", res.status, text);
-
-                if (!res.ok) {
-                    throw new Error(text || `PATCH_FAILED_${res.status}`);
-                }
+                // Update Existing
+                await apiPatch(`/businesses/${businessId}/services/${editingId}`, payload);
             } else {
-                // יצירת שירות חדש – בלי _id, השרת מייצר ObjectId
-                const body = {
-                    name: form.name.trim(),
-                    duration: durationNum,
-                    price: priceNum,
-                };
-
-                const url = `${URL}/businesses/${businessId}/services`;
-                console.log("➕ POST service →", url, body);
-
-                const res = await apiFetch(url, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify(body),
-                });
-
-                const text = await res.text();
-                console.log("➕ POST service response:", res.status, text);
-
-                if (!res.ok) {
-                    throw new Error(text || `POST_FAILED_${res.status}`);
-                }
+                // Create New
+                await apiPost(`/businesses/${businessId}/services`, payload);
             }
 
             await refetch();
             resetForm();
+
         } catch (err: any) {
-            console.error("save service error:", err);
-            Alert.alert(
-                "שגיאה",
-                err?.message || "אירעה שגיאה בשמירת השירות, נסה שוב"
-            );
+            console.error("Save service error:", err);
+            const msg = err.payload?.error || err.message || "אירעה שגיאה בשמירה.";
+            Alert.alert("שגיאה", msg);
         } finally {
             setSaving(false);
         }
@@ -165,54 +129,33 @@ export default function ServicesSettingsSection() {
     const handleDelete = (service: Service) => {
         Alert.alert(
             "מחיקת שירות",
-            `האם אתה בטוח שברצונך למחוק את השירות "${service.name}"?`,
+            `האם למחוק את השירות "${service.name}"?`,
             [
                 { text: "בטל", style: "cancel" },
                 {
                     text: "מחק",
                     style: "destructive",
-                    onPress: () => confirmDelete(service),
+                    onPress: async () => {
+                        if (!businessId) return;
+                        setDeletingId(service._id);
+
+                        try {
+                            await apiDelete(`/businesses/${businessId}/services/${service._id}`);
+                            await refetch();
+
+                            if (editingId === service._id) {
+                                resetForm();
+                            }
+                        } catch (err: any) {
+                            console.error("Delete service error:", err);
+                            Alert.alert("שגיאה", "לא ניתן למחוק את השירות.");
+                        } finally {
+                            setDeletingId(null);
+                        }
+                    },
                 },
             ]
         );
-    };
-
-    const confirmDelete = async (service: Service) => {
-        if (!businessId) {
-            console.warn("❌ confirmDelete: missing businessId");
-            return;
-        }
-
-        try {
-            setDeletingId(service._id);
-
-            const url = `${URL}/businesses/${businessId}/services/${service._id}`;
-            console.log("🗑 DELETE service →", url);
-
-            const res = await apiFetch(url, {
-                method: "DELETE",
-            });
-
-            const text = await res.text();
-            console.log("🗑 DELETE service response:", res.status, text);
-
-            if (!res.ok) {
-                throw new Error(text || `DELETE_FAILED_${res.status}`);
-            }
-
-            await refetch();
-            if (editingId === service._id) {
-                resetForm();
-            }
-        } catch (err: any) {
-            console.error("delete service error:", err);
-            Alert.alert(
-                "שגיאה",
-                err?.message || "אירעה שגיאה במחיקת השירות, נסה שוב"
-            );
-        } finally {
-            setDeletingId(null);
-        }
     };
 
     if (loading && !businessData) {
@@ -231,7 +174,7 @@ export default function ServicesSettingsSection() {
                 ניהול רשימת השירותים שלך: תספורת, זקן, קומבו ועוד.
             </Text>
 
-            {/* טופס הוספה / עריכה */}
+            {/* --- Form --- */}
             <View style={styles.form}>
                 <View style={styles.fieldRow}>
                     <Text style={styles.label}>שם השירות</Text>
@@ -240,6 +183,7 @@ export default function ServicesSettingsSection() {
                         placeholder="לדוגמה: תספורת + זקן"
                         value={form.name}
                         onChangeText={(t) => onChangeField("name", t)}
+                        textAlign="right"
                     />
                 </View>
 
@@ -252,6 +196,7 @@ export default function ServicesSettingsSection() {
                             keyboardType="numeric"
                             value={form.duration}
                             onChangeText={(t) => onChangeField("duration", t)}
+                            textAlign="center"
                         />
                     </View>
 
@@ -263,6 +208,7 @@ export default function ServicesSettingsSection() {
                             keyboardType="numeric"
                             value={form.price}
                             onChangeText={(t) => onChangeField("price", t)}
+                            textAlign="center"
                         />
                     </View>
                 </View>
@@ -274,7 +220,7 @@ export default function ServicesSettingsSection() {
                             onPress={resetForm}
                             disabled={saving}
                         >
-                            <Text style={styles.secondaryButtonText}>ביטול עריכה</Text>
+                            <Text style={styles.secondaryButtonText}>ביטול</Text>
                         </TouchableOpacity>
                     )}
 
@@ -284,34 +230,30 @@ export default function ServicesSettingsSection() {
                         disabled={saving}
                     >
                         {saving ? (
-                            <ActivityIndicator />
+                            <ActivityIndicator color="#fff" />
                         ) : (
                             <Text style={styles.primaryButtonText}>
-                                {editingId ? "שמור שירות" : "הוסף שירות"}
+                                {editingId ? "שמור שינויים" : "הוסף שירות"}
                             </Text>
                         )}
                     </TouchableOpacity>
                 </View>
             </View>
 
-            {/* רשימת שירותים קיימים */}
+            {/* --- List --- */}
             <View style={styles.listWrapper}>
                 <Text style={styles.listTitle}>שירותים קיימים</Text>
+
                 {services.length === 0 ? (
-                    <Text style={styles.emptyText}>
-                        עדיין לא הוגדרו שירותים לעסק הזה.
-                    </Text>
+                    <Text style={styles.emptyText}>עדיין לא הוגדרו שירותים.</Text>
                 ) : (
                     services.map((service) => (
                         <View key={service._id} style={styles.serviceRow}>
+
                             <View style={styles.serviceInfo}>
                                 <Text style={styles.serviceName}>{service.name}</Text>
-                                {/* אפשר להשאיר את המזהה רק לצורך דיבוג */}
                                 <Text style={styles.serviceMeta}>
-                                    מזהה פנימי: {service._id}
-                                </Text>
-                                <Text style={styles.serviceMeta}>
-                                    משך: {service.duration} דקות · מחיר: {service.price} ₪
+                                    משך: {service.duration} דק'  |  מחיר: {service.price} ₪
                                 </Text>
                             </View>
 
@@ -329,12 +271,13 @@ export default function ServicesSettingsSection() {
                                     disabled={deletingId === service._id}
                                 >
                                     {deletingId === service._id ? (
-                                        <ActivityIndicator size="small" />
+                                        <ActivityIndicator size="small" color="#b91c1c" />
                                     ) : (
                                         <Text style={styles.deleteButtonText}>מחיקה</Text>
                                     )}
                                 </TouchableOpacity>
                             </View>
+
                         </View>
                     ))
                 )}
@@ -358,15 +301,19 @@ const styles = StyleSheet.create({
         fontSize: 18,
         fontWeight: "700",
         marginBottom: 4,
+        textAlign: "right",
     },
     subtitle: {
         fontSize: 13,
         color: "#6b7280",
         marginBottom: 12,
+        textAlign: "right",
     },
+
+    // Form
     form: {
         borderTopWidth: 1,
-        borderTopColor: "#e5e7eb",
+        borderTopColor: "#f3f4f6",
         paddingTop: 12,
         marginTop: 4,
     },
@@ -378,10 +325,11 @@ const styles = StyleSheet.create({
         fontWeight: "500",
         marginBottom: 4,
         color: "#374151",
+        textAlign: "right",
     },
     input: {
         borderWidth: 1,
-        borderColor: "#d1d5db",
+        borderColor: "#e5e7eb",
         borderRadius: 12,
         paddingHorizontal: 10,
         paddingVertical: 8,
@@ -389,25 +337,26 @@ const styles = StyleSheet.create({
         backgroundColor: "#f9fafb",
     },
     row: {
-        flexDirection: "row",
+        flexDirection: "row-reverse", // RTL
         gap: 8,
     },
     rowItem: {
         flex: 1,
     },
+
+    // תוקן כאן: ניקוי הכפילויות והערות המיותרות
     actionsRow: {
-        flexDirection: "row",
-        justifyContent: "flex-end",
-        alignItems: "center",
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
         gap: 8,
         marginTop: 8,
     },
     button: {
-        paddingHorizontal: 14,
-        paddingVertical: 8,
+        paddingHorizontal: 16,
+        paddingVertical: 10,
         borderRadius: 999,
-        justifyContent: "center",
         alignItems: "center",
+        justifyContent: "center",
     },
     primaryButton: {
         backgroundColor: "#1d4ed8",
@@ -418,44 +367,51 @@ const styles = StyleSheet.create({
         fontSize: 14,
     },
     secondaryButton: {
-        backgroundColor: "#e5e7eb",
+        backgroundColor: "#f3f4f6",
     },
     secondaryButtonText: {
-        color: "#111827",
+        color: "#374151",
         fontWeight: "500",
-        fontSize: 13,
+        fontSize: 14,
     },
+
+    // List
     listWrapper: {
         borderTopWidth: 1,
-        borderTopColor: "#e5e7eb",
-        paddingTop: 12,
-        marginTop: 12,
+        borderTopColor: "#f3f4f6",
+        paddingTop: 16,
+        marginTop: 16,
     },
     listTitle: {
         fontSize: 15,
         fontWeight: "600",
-        marginBottom: 6,
+        marginBottom: 8,
+        textAlign: "right",
     },
     emptyText: {
         fontSize: 13,
-        color: "#6b7280",
+        color: "#9ca3af",
+        textAlign: "center",
+        fontStyle: 'italic',
+        marginVertical: 10,
     },
     serviceRow: {
-        flexDirection: "row",
-        alignItems: "flex-start",
+        flexDirection: "row-reverse",
+        alignItems: "center",
         justifyContent: "space-between",
-        paddingVertical: 8,
+        paddingVertical: 10,
         borderBottomWidth: 1,
         borderBottomColor: "#f3f4f6",
     },
     serviceInfo: {
         flex: 1,
-        paddingRight: 8,
+        alignItems: 'flex-end', // RTL alignment
     },
     serviceName: {
         fontSize: 14,
         fontWeight: "600",
         marginBottom: 2,
+        color: "#111",
     },
     serviceMeta: {
         fontSize: 12,
@@ -463,22 +419,21 @@ const styles = StyleSheet.create({
     },
     serviceActions: {
         flexDirection: "row",
-        gap: 6,
+        gap: 8,
+        marginRight: 10, // Space from info
     },
     smallButton: {
-        paddingHorizontal: 10,
+        paddingHorizontal: 12,
         paddingVertical: 6,
-        borderRadius: 999,
-        justifyContent: "center",
-        alignItems: "center",
+        borderRadius: 8,
     },
     editButton: {
-        backgroundColor: "#e0f2fe",
+        backgroundColor: "#eff6ff",
     },
     editButtonText: {
         fontSize: 12,
         fontWeight: "600",
-        color: "#0369a1",
+        color: "#2563eb",
     },
     deleteButton: {
         backgroundColor: "#fee2e2",
@@ -486,6 +441,6 @@ const styles = StyleSheet.create({
     deleteButtonText: {
         fontSize: 12,
         fontWeight: "600",
-        color: "#b91c1c",
+        color: "#dc2626",
     },
 });

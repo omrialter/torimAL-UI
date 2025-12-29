@@ -1,34 +1,51 @@
+// hooks/useUserData.ts
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { URL, apiGet } from "../services/api"; // keep your existing service
+import { apiGet } from "../services/api";
 
-type UserData = Record<string, any>;
+export function useUserData<T = any>() {
+    const { userToken } = useAuth();
 
-export function useUserData() {
-    const { appReady, userToken } = useAuth();
-    const [userData, setUserData] = useState<UserData>({});
+    // שיניתי ל-null כערך התחלתי, קל יותר לבדוק אם המידע נטען
+    const [userData, setUserData] = useState<T | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
 
+    /**
+     * פונקציה לטעינת נתוני המשתמש מהשרת.
+     * חשופה החוצה כדי לאפשר רענון ידני (Pull to Refresh).
+     */
+    const fetchUserData = useCallback(async () => {
+        if (!userToken) return;
 
-    const doApiUser = useCallback(async () => {
+        setIsLoading(true);
         try {
-            const data = await apiGet(`${URL}/users/userInfo`);
-            setUserData(data);
+            // אין צורך ב-${URL}, ה-apiGet מטפל בזה
+            const data = await apiGet<T>("/users/userInfo");
+            if (data) {
+                setUserData(data);
+            }
         } catch (err) {
-            console.log("useUserData/doApiUser error:", err);
+            console.log("❌ useUserData error:", err);
+        } finally {
+            setIsLoading(false);
         }
-    }, []);
+    }, [userToken]);
 
+    // טעינה ראשונית כאשר הטוקן זמין
     useEffect(() => {
-        if (!appReady) return;
         if (userToken) {
-            void doApiUser();
-            console.log("this messege is from the useUserData, the function worked we have the data");
+            void fetchUserData();
         } else {
-            setUserData({});
+            setUserData(null);
         }
-    }, [appReady, userToken]);
+    }, [userToken, fetchUserData]);
 
-    const clear = () => setUserData({});
+    const clear = useCallback(() => setUserData(null), []);
 
-    return { userData, clear };
+    return {
+        userData,
+        isLoading,
+        refetch: fetchUserData,
+        clear
+    };
 }

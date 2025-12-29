@@ -1,7 +1,6 @@
-// -----------------------------------------------------------
-// BookAppointmentScreen.tsx — כולל תמיכה ב-QuickBook
-// -----------------------------------------------------------
+// app/(user)/orderTor.tsx (BookAppointmentScreen)
 
+import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
@@ -13,24 +12,19 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import type { DateData } from "react-native-calendars";
-import { CalendarList } from "react-native-calendars";
+import { CalendarList, DateData } from "react-native-calendars";
 
+// Contexts & Services
 import { useAuth } from "@/contexts/AuthContext";
 import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
-// 👇 הוספנו את useLocalSearchParams
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { URL, apiFetch } from "../../services/api";
+import { apiFetch } from "@/services/api";
 
-// ---------- Constants ----------
-
-const API_URL = `${URL}/appointments`;
-const BLOCKS_API_URL = `${URL}/blocks`;
+// ----------------------------------------------------------------------
+// Types & Interfaces
+// ----------------------------------------------------------------------
 
 type AppointmentStatus = "confirmed" | "canceled" | "completed" | "no_show";
 const BLOCKING_STATUSES: AppointmentStatus[] = ["confirmed"];
-
-// ---------- Types ----------
 
 interface OpeningHoursRange {
     open: string | null;
@@ -38,6 +32,7 @@ interface OpeningHoursRange {
 }
 
 interface OpeningHoursByDay {
+    [key: string]: OpeningHoursRange | undefined;
     sunday: OpeningHoursRange;
     monday: OpeningHoursRange;
     tuesday: OpeningHoursRange;
@@ -47,38 +42,14 @@ interface OpeningHoursByDay {
     saturday: OpeningHoursRange;
 }
 
-interface BusinessUserRef {
-    _id: string;
-    name?: string;
-    fullName?: string;
-    phone?: string;
+interface StaffMember {
+    id: string;
+    name: string;
     avatarUrl?: string;
 }
 
-interface BusinessServiceFromDb {
-    _id: string;
-    name: string;
-    duration: number;
-    price: number;
-}
-
-interface BusinessForBooking {
-    _id: string;
-    name: string;
-    owner: BusinessUserRef;
-    workers?: BusinessUserRef[];
-    services?: BusinessServiceFromDb[];
-    openingHours?: OpeningHoursByDay;
-}
-
-interface Service {
+interface ServiceItem {
     id: string;
-    name: string;
-    duration: number;
-    price: number;
-}
-
-interface AppointmentService {
     name: string;
     duration: number;
     price: number;
@@ -86,65 +57,26 @@ interface AppointmentService {
 
 interface Appointment {
     _id: string;
-    business: string;
-    client: string;
-    worker: string;
-    service: AppointmentService;
-    start: string;
+    start: string; // ISO String
     status: AppointmentStatus;
-    notes: string | null;
+    service: { duration: number };
 }
 
-interface ApptInterval {
-    start: Date;
-    end: Date;
-    status: AppointmentStatus;
-}
-
-interface Staff {
-    id: string;
-    name: string;
-    avatarUrl?: string;
-}
-
-/** Block מהשרת */
 interface Block {
     _id: string;
-    business: string;
-    resource: string | null;
-    start: string; // ISO
-    end: string; // ISO
-    reason: string;
-    notes?: string | null;
+    resource: string | null; // null = חסימה לכל העסק, string = חסימה לעובד ספציפי
+    start: string;
+    end: string;
 }
 
-interface BlockInterval {
-    start: Date;
-    end: Date;
-}
-
-// ---------- Helpers ----------
+// ----------------------------------------------------------------------
+// Helpers
+// ----------------------------------------------------------------------
 
 const dateToYMD = (date: Date) =>
-    `${date.getFullYear()}-${`${date.getMonth() + 1}`.padStart(2, "0")}-${`${date.getDate()}`.padStart(2, "0")}`;
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
 const minutesToMs = (min: number) => min * 60 * 1000;
-
-const getApptInterval = (appt: Appointment): ApptInterval => {
-    const start = new Date(appt.start);
-    const end = new Date(start.getTime() + minutesToMs(appt.service.duration));
-    return { start, end, status: appt.status };
-};
-
-const getBlockInterval = (block: Block): BlockInterval => {
-    return {
-        start: new Date(block.start),
-        end: new Date(block.end),
-    };
-};
-
-const intervalsOverlap = (aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) =>
-    aStart < bEnd && aEnd > bStart;
 
 const formatTime = (d: Date) =>
     d.toLocaleTimeString("he-IL", {
@@ -156,21 +88,16 @@ const formatTime = (d: Date) =>
 const formatDate = (d: Date) =>
     d.toLocaleDateString("he-IL", { weekday: "long", day: "2-digit", month: "2-digit" });
 
-// ---------------------------------------------
-// OPENING HOURS SUPPORT
-// ---------------------------------------------
+const intervalsOverlap = (aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) =>
+    aStart < bEnd && aEnd > bStart;
 
-const DAY_KEYS: (keyof OpeningHoursByDay)[] = [
-    "sunday",
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday",
-];
+// --- Opening Hours Logic ---
 
-const DAY_LABELS: Record<keyof OpeningHoursByDay, string> = {
+const DAY_KEYS = [
+    "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"
+] as const;
+
+const DAY_LABELS: Record<string, string> = {
     sunday: "ראשון",
     monday: "שני",
     tuesday: "שלישי",
@@ -189,13 +116,13 @@ const applyTimeToDate = (baseDate: Date, timeStr: string): Date => {
 
 const getOpeningRangeForDate = (
     date: Date,
-    business: BusinessForBooking | null
+    openingHours?: OpeningHoursByDay
 ): { dayStart: Date; dayEnd: Date } | null => {
-    if (!business?.openingHours) return null;
+    if (!openingHours) return null;
 
-    const jsDay = date.getDay(); // 0 = Sunday
-    const key = DAY_KEYS[jsDay];
-    const range = business.openingHours[key];
+    const dayIndex = date.getDay();
+    const key = DAY_KEYS[dayIndex];
+    const range = openingHours[key];
 
     if (!range || !range.open || !range.close) return null;
 
@@ -207,52 +134,56 @@ const getOpeningRangeForDate = (
     return { dayStart, dayEnd };
 };
 
-// ---------------------------------------------
-// DAY CELL (CalendarList dayComponent)
-// ---------------------------------------------
+// ----------------------------------------------------------------------
+// Sub-Component: DayCell
+// ----------------------------------------------------------------------
 
-function DayCell({
-    date,
-    state,
-    business,
-    blockedDatesMap,
-    selectedDate,
-    onPickDate,
-}: {
+interface DayCellProps {
     date?: DateData;
     state?: string;
-    business: BusinessForBooking | null;
+    openingHours?: OpeningHoursByDay;
     blockedDatesMap: { [dateStr: string]: boolean };
     selectedDate: Date | null;
     onPickDate: (dateString: string) => void;
-}) {
+}
+
+const DayCell = React.memo(({
+    date,
+    state,
+    openingHours,
+    blockedDatesMap,
+    selectedDate,
+    onPickDate,
+}: DayCellProps) => {
     if (!date?.dateString) return <View />;
 
     const d = new Date(date.dateString);
-    const opening = getOpeningRangeForDate(d, business);
+    const opening = getOpeningRangeForDate(d, openingHours);
     const isBlockedDay = !!blockedDatesMap[date.dateString];
 
-    // בדיקה נוספת: אם ה-state הוא 'disabled' (ימים מהעבר ב-CalendarList)
-    const isPast = state === 'disabled';
+    // ימים מהעבר או ימים שהם לא בחודש הנוכחי (תלוי ב-Calendar implementation)
+    const isPast = state === "disabled";
     const isClosed = !opening || isBlockedDay || isPast;
 
     const isSelected = !!selectedDate && date.dateString === dateToYMD(selectedDate);
     const isToday = state === "today";
 
+    const handlePress = () => {
+        if (isClosed) {
+            if (!isPast) {
+                Alert.alert(
+                    isBlockedDay ? "יום חסום" : "העסק סגור",
+                    isBlockedDay ? "ביום זה קיימת חסימה (חופשה/חג)." : "העסק אינו פעיל ביום זה."
+                );
+            }
+            return;
+        }
+        onPickDate(date.dateString);
+    };
+
     return (
         <TouchableOpacity
-            onPress={() => {
-                if (isClosed) {
-                    if (!isPast) { // הודעה רק אם זה לא יום מהעבר
-                        Alert.alert(
-                            isBlockedDay ? "היום חסום (חופשה / אירוע מיוחד)" : "העסק סגור ביום זה",
-                            "בחר יום אחר מתוך הימים הפתוחים."
-                        );
-                    }
-                    return;
-                }
-                onPickDate(date.dateString);
-            }}
+            onPress={handlePress}
             activeOpacity={isClosed ? 1 : 0.6}
         >
             <View
@@ -260,7 +191,7 @@ function DayCell({
                     styles.dayContainer,
                     isBlockedDay && styles.dayContainerBlocked,
                     isSelected && styles.dayContainerSelected,
-                    isPast && { opacity: 0.3 } // ויזואלית להחליש ימים מהעבר
+                    isPast && { opacity: 0.3 },
                 ]}
             >
                 <Text
@@ -276,173 +207,149 @@ function DayCell({
             </View>
         </TouchableOpacity>
     );
-}
+});
 
-// -----------------------------------------------------------
-// MAIN COMPONENT
-// -----------------------------------------------------------
+// ----------------------------------------------------------------------
+// Main Component: BookAppointmentScreen
+// ----------------------------------------------------------------------
 
-const BookAppointmentScreen = () => {
-    const { user, userToken } = useAuth();
-    const { businessData } = useBusinessDataContext();
-    const business = businessData as BusinessForBooking | null;
+export default function BookAppointmentScreen() {
     const router = useRouter();
 
-    const clientId = user?._id || (user as any)?.id || (user as any)?.userId || null;
+    // Context Data
+    const { user, userToken } = useAuth();
+    const { businessData } = useBusinessDataContext();
 
+    // Params (QuickBook)
+    const params = useLocalSearchParams();
+    const { preSelectedDate, workerId: paramWorkerId, serviceId: paramServiceId } = params;
+
+    // Local State
     const [currentStep, setCurrentStep] = useState(1);
-    const [selectedStaff, setSelectedStaff] = useState<Staff | null>(null);
-    const [selectedService, setSelectedService] = useState<Service | null>(null);
+    const [selectedStaff, setSelectedStaff] = useState<StaffMember | null>(null);
+    const [selectedService, setSelectedService] = useState<ServiceItem | null>(null);
     const [selectedDate, setSelectedDate] = useState<Date | null>(null);
     const [selectedTime, setSelectedTime] = useState<Date | null>(null);
-    const [notes, setNotes] = useState("");
 
+    // Data State
     const [dayAppointments, setDayAppointments] = useState<Appointment[]>([]);
-    const [loadingDayAppointments, setLoadingDayAppointments] = useState(false);
-
-    /** חסימות ליום שנבחר (עבור worker הנבחר + חסימות כלליות לעסק) */
     const [dayBlocks, setDayBlocks] = useState<Block[]>([]);
-    const [loadingDayBlocks, setLoadingDayBlocks] = useState(false);
-
-    /**
-     * מפת ימים חסומים לטווח (לצביעה ביומן) –
-     * חשוב: חייב להיות תלוי ב-worker הנבחר כדי לא "לזלוג" חופשות בין עובדים.
-     */
     const [blockedDatesMap, setBlockedDatesMap] = useState<{ [dateStr: string]: boolean }>({});
 
+    // Loading & Modals
+    const [loadingSlots, setLoadingSlots] = useState(false);
     const [submitting, setSubmitting] = useState(false);
+    const [bookingSuccess, setBookingSuccess] = useState(false);
+
     const [showStaffModal, setShowStaffModal] = useState(false);
     const [showServiceModal, setShowServiceModal] = useState(false);
     const [showDateModal, setShowDateModal] = useState(false);
     const [showTimeModal, setShowTimeModal] = useState(false);
-    const [bookingSuccess, setBookingSuccess] = useState(false);
 
-    // Services
-    const services = useMemo(() => {
-        if (!business?.services) return [];
-        return business.services.map((s) => ({
+    // Business Data Parsing
+    // שימוש ב-any כאן רק לצורך חילוץ מהיר, כי המבנה המלא של businessData מורכב
+    const business = businessData as any;
+    const openingHours = business?.openingHours as OpeningHoursByDay | undefined;
+
+    const clientId = user?._id;
+
+    // --- Derived Data: Staff & Services ---
+
+    const services: ServiceItem[] = useMemo(() => {
+        return business?.services?.map((s: any) => ({
             id: s._id,
             name: s.name,
             duration: s.duration,
             price: s.price,
-        }));
+        })) || [];
     }, [business]);
 
-    // Staff
-    const staffOptions = useMemo(() => {
-        if (!business) return [];
-
-        if (business.workers?.length)
-            return business.workers.map((w) => ({
+    const staffOptions: StaffMember[] = useMemo(() => {
+        if (business?.workers?.length) {
+            return business.workers.map((w: any) => ({
                 id: w._id,
                 name: w.name || w.fullName || "עובד",
                 avatarUrl: w.avatarUrl,
             }));
-
-        return [
-            {
-                id: business.owner?._id,
-                name: business.owner?.name || "איש צוות",
-            },
-        ];
+        }
+        // Fallback: בעל העסק
+        return [{
+            id: business?.owner?._id,
+            name: business?.owner?.name || "איש צוות",
+        }];
     }, [business]);
 
+    // קביעת עובד ברירת מחדל אם יש רק אחד
     useEffect(() => {
-        if (!selectedStaff && staffOptions.length === 1) setSelectedStaff(staffOptions[0]);
+        if (!selectedStaff && staffOptions.length === 1) {
+            setSelectedStaff(staffOptions[0]);
+        }
     }, [staffOptions, selectedStaff]);
 
-    /** worker בפועל שנשתמש בו לכל החישובים */
-    const selectedWorkerId = useMemo(() => {
-        return selectedStaff?.id || staffOptions[0]?.id || null;
-    }, [selectedStaff, staffOptions]);
+    const selectedWorkerId = selectedStaff?.id || staffOptions[0]?.id;
 
-    // -----------------------------------------------------------
-    // 👇 תוספת: טיפול ב-QuickBook (קליטת פרמטרים ומילוי אוטומטי)
-    // -----------------------------------------------------------
-    const params = useLocalSearchParams();
-    const { preSelectedDate, workerId: paramWorkerId, serviceId: paramServiceId } = params;
-
+    // --- QuickBook Logic (Deep Linking) ---
     useEffect(() => {
-        // אם אין פרמטרים - לא עושים כלום
-        if (!preSelectedDate || !paramWorkerId || !paramServiceId) return;
+        if (!preSelectedDate && !paramWorkerId && !paramServiceId) return;
 
-        // אם המשתמש כבר בחר דברים, לא נדרוס לו אותם (אופציונלי)
-        if (selectedDate && selectedTime && selectedStaff && selectedService) return;
+        // מניעת דריסה אם המשתמש כבר בחר
+        if (selectedDate && selectedStaff && selectedService) return;
 
-        // 1. מציאת עובד
-        const workerObj = staffOptions.find(s => s.id === paramWorkerId);
-        if (workerObj) {
-            setSelectedStaff(workerObj);
+        if (paramWorkerId) {
+            const w = staffOptions.find(s => s.id === paramWorkerId);
+            if (w) setSelectedStaff(w);
         }
 
-        // 2. מציאת שירות
-        const serviceObj = services.find(s => s.id === paramServiceId);
-        if (serviceObj) {
-            setSelectedService(serviceObj);
+        if (paramServiceId) {
+            const s = services.find(srv => srv.id === paramServiceId);
+            if (s) setSelectedService(s);
         }
 
-        // 3. הגדרת יום ושעה
         if (typeof preSelectedDate === 'string') {
-            const dateObj = new Date(preSelectedDate);
-            if (!isNaN(dateObj.getTime())) {
-                setSelectedDate(dateObj); // ליומן
-                setSelectedTime(dateObj); // לשעה
+            const d = new Date(preSelectedDate);
+            if (!isNaN(d.getTime())) {
+                setSelectedDate(d);
+                setSelectedTime(d);
             }
         }
     }, [preSelectedDate, paramWorkerId, paramServiceId, staffOptions, services]);
-    // -----------------------------------------------------------
 
 
-    // Load appointments for selected day
+    // --- Data Fetching: Slots & Blocks ---
+
+    // 1. טעינת תורים ובלוקים ליום ספציפי (בעת בחירת תאריך)
     useEffect(() => {
-        const load = async () => {
-            if (!selectedDate || !userToken) return;
-            if (!selectedWorkerId) return;
+        const fetchData = async () => {
+            if (!selectedDate || !userToken || !selectedWorkerId) return;
 
-            setLoadingDayAppointments(true);
+            setLoadingSlots(true);
+            const dateStr = dateToYMD(selectedDate);
 
             try {
-                const dateStr = dateToYMD(selectedDate);
-                const res = await apiFetch(`${API_URL}/by-day?date=${dateStr}&worker=${selectedWorkerId}`);
-                setDayAppointments(res.ok ? await res.json() : []);
-            } catch {
-                setDayAppointments([]);
+                // שימוש ב-Promise.all לביצוע בקשות במקביל
+                const [apptsRes, blocksRes] = await Promise.all([
+                    apiFetch(`/appointments/by-day?date=${dateStr}&worker=${selectedWorkerId}`),
+                    apiFetch(`/blocks/by-day?date=${dateStr}&worker=${selectedWorkerId}`)
+                ]);
+
+                if (apptsRes.ok) setDayAppointments(await apptsRes.json());
+                if (blocksRes.ok) setDayBlocks(await blocksRes.json());
+
+            } catch (err) {
+                console.log("Error loading slots:", err);
             } finally {
-                setLoadingDayAppointments(false);
+                setLoadingSlots(false);
             }
         };
 
-        load();
+        fetchData();
     }, [selectedDate, selectedWorkerId, userToken]);
 
-    // Load blocks for selected day (business-wide + selected worker)
+
+    // 2. טעינת חסימות לחצי שנה קדימה (לצביעת היומן)
     useEffect(() => {
-        const loadBlocks = async () => {
-            if (!selectedDate || !userToken) return;
-            if (!selectedWorkerId) return;
-
-            setLoadingDayBlocks(true);
-
-            try {
-                const dateStr = dateToYMD(selectedDate);
-                const res = await apiFetch(`${BLOCKS_API_URL}/by-day?date=${dateStr}&worker=${selectedWorkerId}`);
-                const data = res.ok ? await res.json() : [];
-                setDayBlocks(data);
-            } catch {
-                setDayBlocks([]);
-            } finally {
-                setLoadingDayBlocks(false);
-            }
-        };
-
-        loadBlocks();
-    }, [selectedDate, selectedWorkerId, userToken]);
-
-    // Range blocks for calendar coloring (DEPENDS ON WORKER)
-    useEffect(() => {
-        const loadRangeBlocks = async () => {
-            if (!userToken || !business) return;
-            if (!selectedWorkerId) {
+        const fetchRangeBlocks = async () => {
+            if (!userToken || !selectedWorkerId) {
                 setBlockedDatesMap({});
                 return;
             }
@@ -452,147 +359,120 @@ const BookAppointmentScreen = () => {
                 const toDate = new Date();
                 toDate.setMonth(toDate.getMonth() + 6);
 
-                const fromStr = dateToYMD(fromDate);
-                const toStr = dateToYMD(toDate);
-
-                // חשוב: מסננים לפי worker כדי לא להביא חופשות של עובדים אחרים
                 const res = await apiFetch(
-                    `${BLOCKS_API_URL}/list?from=${fromStr}&to=${toStr}&resource=${selectedWorkerId}`
+                    `/blocks/list?from=${dateToYMD(fromDate)}&to=${dateToYMD(toDate)}&resource=${selectedWorkerId}`
                 );
 
-                if (!res.ok) {
-                    setBlockedDatesMap({});
-                    return;
-                }
+                if (!res.ok) return;
 
                 const blocks: Block[] = await res.json();
+                const map: { [key: string]: boolean } = {};
 
-                const map: { [dateStr: string]: boolean } = {};
-
-                // מסמנים יום כחסום אם יש בלוק שמכסה את כל היום (לפי שעות פתיחה)
-                // ושייך לכל העסק (resource=null) או לעובד הנבחר
                 blocks.forEach((block) => {
-                    const isRelevant =
-                        block.resource === null || block.resource === selectedWorkerId;
-
-                    if (!isRelevant) return;
+                    // סינון בלוקים רלוונטיים (כלליים או של העובד)
+                    if (block.resource && block.resource !== selectedWorkerId) return;
 
                     const blockStart = new Date(block.start);
                     const blockEnd = new Date(block.end);
 
-                    const cur = new Date(blockStart);
-                    cur.setHours(0, 0, 0, 0);
+                    let cursor = new Date(blockStart);
+                    cursor.setHours(0, 0, 0, 0);
 
                     const endDay = new Date(blockEnd);
                     endDay.setHours(0, 0, 0, 0);
 
-                    while (cur <= endDay) {
-                        const ymd = dateToYMD(cur);
-                        const opening = getOpeningRangeForDate(cur, business);
+                    // מעבר על כל הימים בטווח החסימה
+                    while (cursor <= endDay) {
+                        const range = getOpeningRangeForDate(cursor, openingHours);
 
-                        // אם העסק סגור – DayCell כבר יטפל בזה (opening null),
-                        // אבל נשאיר גם כאן "חסימה" כדי לאפשר UI עקבי אם תרצה.
-                        if (!opening) {
-                            map[ymd] = true;
-                        } else {
-                            const { dayStart, dayEnd } = opening;
-
-                            // חסימה שמכסה את כל שעות הפעילות של אותו היום
+                        // אם החסימה מכסה את כל שעות הפעילות של אותו יום
+                        if (range) {
+                            const { dayStart, dayEnd } = range;
                             if (blockStart <= dayStart && blockEnd >= dayEnd) {
-                                map[ymd] = true;
+                                map[dateToYMD(cursor)] = true;
                             }
                         }
-
-                        cur.setDate(cur.getDate() + 1);
+                        cursor.setDate(cursor.getDate() + 1);
                     }
                 });
 
                 setBlockedDatesMap(map);
+
             } catch (err) {
-                console.log("loadRangeBlocks error", err);
-                setBlockedDatesMap({});
+                console.error("fetchRangeBlocks error", err);
             }
         };
 
-        loadRangeBlocks();
-    }, [userToken, business, selectedWorkerId]);
+        fetchRangeBlocks();
+    }, [selectedWorkerId, userToken, openingHours]);
 
-    // Available slots
+
+    // --- Logic: Calculate Available Slots ---
+
     const availableSlots = useMemo(() => {
-        if (!selectedDate || !selectedService) return [];
+        if (!selectedDate || !selectedService || !openingHours) return [];
 
-        const opening = getOpeningRangeForDate(selectedDate, business);
-        if (!opening) return [];
+        const range = getOpeningRangeForDate(selectedDate, openingHours);
+        if (!range) return []; // יום סגור
 
-        const { dayStart, dayEnd } = opening;
+        const { dayStart, dayEnd } = range;
         const duration = selectedService.duration;
-
-        const appts = dayAppointments
-            .filter((a) => BLOCKING_STATUSES.includes(a.status))
-            .map(getApptInterval);
-
-        const blockIntervals: BlockInterval[] = dayBlocks.map(getBlockInterval);
 
         const slots: Date[] = [];
         let cursor = new Date(dayStart);
 
-        // בדיקה: האם התאריך הנבחר הוא היום?
+        // בדיקה אם היום הוא "היום" כדי לסנן שעות שעברו
         const now = new Date();
-        const isToday =
-            selectedDate.getDate() === now.getDate() &&
+        const isToday = selectedDate.getDate() === now.getDate() &&
             selectedDate.getMonth() === now.getMonth() &&
             selectedDate.getFullYear() === now.getFullYear();
 
         while (true) {
             const slotStart = new Date(cursor);
             const slotEnd = new Date(slotStart.getTime() + minutesToMs(duration));
+
+            // חריגה משעות הפעילות
             if (slotEnd > dayEnd) break;
 
-            // --- לוגיקה חדשה: סינון שעות שכבר עברו אם היום הוא "היום" ---
+            // סינון שעות שעברו
             if (isToday && slotStart < now) {
-                // מדלגים על השעה הזו וממשיכים הלאה
                 cursor = new Date(cursor.getTime() + minutesToMs(duration));
                 continue;
             }
-            // -----------------------------------------------------------
 
-            const conflictWithAppt = appts.some((a) => intervalsOverlap(slotStart, slotEnd, a.start, a.end));
-            const conflictWithBlock = blockIntervals.some((b) => intervalsOverlap(slotStart, slotEnd, b.start, b.end));
+            // בדיקת התנגשויות
+            const hasConflict =
+                dayAppointments.some(appt =>
+                    BLOCKING_STATUSES.includes(appt.status) &&
+                    intervalsOverlap(slotStart, slotEnd, new Date(appt.start), new Date(new Date(appt.start).getTime() + minutesToMs(appt.service.duration)))
+                ) ||
+                dayBlocks.some(block =>
+                    intervalsOverlap(slotStart, slotEnd, new Date(block.start), new Date(block.end))
+                );
 
-            if (!conflictWithAppt && !conflictWithBlock) {
+            if (!hasConflict) {
                 slots.push(slotStart);
             }
 
+            // קפיצה במרווחים של הטיפול (אפשר לשנות לקפיצות קבועות של 15 דק' אם רוצים)
             cursor = new Date(cursor.getTime() + minutesToMs(duration));
         }
 
         return slots;
-    }, [selectedDate, selectedService, dayAppointments, dayBlocks, business]);
+    }, [selectedDate, selectedService, dayAppointments, dayBlocks, openingHours]);
 
-    // Opening hours lines
-    const openingLines = useMemo(() => {
-        if (!business?.openingHours) return [];
-        const lines: { day: string; text: string }[] = [];
 
-        DAY_KEYS.forEach((key) => {
-            const range = business.openingHours![key];
-            let text = "סגור";
-            if (range && range.open && range.close) {
-                text = `${range.open} - ${range.close}`;
-            }
-            lines.push({ day: DAY_LABELS[key], text });
-        });
+    // --- Logic: Submit ---
 
-        return lines;
-    }, [business]);
-
-    // Submit
     const handleSubmit = async () => {
-        if (!clientId || !selectedService || !selectedDate || !selectedTime)
-            return Alert.alert("שגיאה", "יש למלא את כל השלבים");
-
-        const workerId = selectedWorkerId;
-        if (!workerId) return Alert.alert("שגיאה", "בחר איש צוות");
+        if (!clientId) {
+            Alert.alert("שגיאה", "לא נמצא משתמש מחובר.");
+            return;
+        }
+        if (!selectedService || !selectedDate || !selectedTime || !selectedWorkerId) {
+            Alert.alert("חסרים פרטים", "יש להשלים את כל שלבי ההזמנה.");
+            return;
+        }
 
         setSubmitting(true);
 
@@ -600,193 +480,169 @@ const BookAppointmentScreen = () => {
             const start = new Date(selectedDate);
             start.setHours(selectedTime.getHours(), selectedTime.getMinutes(), 0, 0);
 
-            const body = {
+            const payload = {
                 client: clientId,
-                worker: workerId,
+                worker: selectedWorkerId,
                 service: {
                     name: selectedService.name,
                     duration: selectedService.duration,
                     price: selectedService.price,
                 },
                 start: start.toISOString(),
-                notes,
             };
 
-            const res = await apiFetch(API_URL, {
+            const res = await apiFetch("/appointments", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(body),
+                body: JSON.stringify(payload),
             });
 
-            if (res.status === 201) {
+            if (res.ok) {
                 setBookingSuccess(true);
-                Alert.alert("הצליח!", "התור נקבע בהצלחה");
-                return;
+                Alert.alert("איזה כיף!", "התור נקבע בהצלחה 🎉");
+            } else {
+                const errData = await res.json();
+                Alert.alert("שגיאה", errData?.message || "תקלה בקביעת התור");
             }
 
-            Alert.alert("שגיאה", await res.text());
-        } catch {
-            Alert.alert("שגיאה", "תקלה בשרת / אינטרנט");
+        } catch (err) {
+            Alert.alert("שגיאה", "תקלה בתקשורת עם השרת");
         } finally {
             setSubmitting(false);
         }
     };
 
-    // Render
+
+    // --- Render Helpers ---
+
+    const renderOpeningHours = useMemo(() => {
+        if (!openingHours) return null;
+        return DAY_KEYS.map(key => {
+            const range = openingHours[key];
+            const text = (range?.open && range?.close) ? `${range.open} - ${range.close}` : "סגור";
+            return (
+                <View key={key} style={styles.openingRow}>
+                    <Text style={styles.openingDay}>{DAY_LABELS[key]}</Text>
+                    <Text style={styles.openingTime}>{text}</Text>
+                </View>
+            );
+        });
+    }, [openingHours]);
+
+
     return (
         <View style={styles.container}>
             <Text style={styles.title}>הזמנת תור</Text>
 
-            {/* Opening hours */}
-            {openingLines.length > 0 && (
-                <View style={styles.openingBox}>
-                    <Text style={styles.openingTitle}>שעות פעילות העסק</Text>
-                    {openingLines.map((line, idx) => (
-                        <View key={idx} style={styles.openingRow}>
-                            <Text style={styles.openingDay}>{line.day}</Text>
-                            <Text style={styles.openingTime}>{line.text}</Text>
-                        </View>
-                    ))}
-                    <Text style={styles.openingNote}>
-                        * קביעת תורים אפשרית רק בשעות הפעילות של העסק, ולא בזמן חסימה ביומן.
-                    </Text>
-                </View>
-            )}
+            {/* Opening Hours Info */}
+            <View style={styles.openingBox}>
+                <Text style={styles.openingTitle}>שעות פעילות</Text>
+                {renderOpeningHours}
+                <Text style={styles.openingNote}>* קביעת תור אפשרית רק בשעות הפעילות הפנויות.</Text>
+            </View>
 
-            <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-                {/* STEP 1 */}
+            <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+
+                {/* Step 1: Staff */}
                 <TouchableOpacity style={styles.stepRow} onPress={() => setShowStaffModal(true)}>
-                    <View style={styles.stepNumberCircle}>
-                        <Text style={{ color: "#fff" }}>1</Text>
-                    </View>
+                    <View style={styles.stepNumberCircle}><Text style={styles.stepNumText}>1</Text></View>
                     <View>
                         <Text style={styles.stepLabel}>איש צוות</Text>
-                        <Text style={styles.stepValue}>{selectedStaff?.name || "בחר איש צוות"}</Text>
+                        <Text style={styles.stepValue}>{selectedStaff?.name || "בחר..."}</Text>
                     </View>
                 </TouchableOpacity>
 
-                {/* STEP 2 */}
+                {/* Step 2: Service */}
                 <TouchableOpacity style={styles.stepRow} onPress={() => setShowServiceModal(true)}>
-                    <View style={styles.stepNumberCircle}>
-                        <Text style={{ color: "#fff" }}>2</Text>
-                    </View>
+                    <View style={styles.stepNumberCircle}><Text style={styles.stepNumText}>2</Text></View>
                     <View>
                         <Text style={styles.stepLabel}>טיפול</Text>
                         <Text style={styles.stepValue}>
-                            {selectedService ? `${selectedService.name} · ${selectedService.price} ₪` : "בחר טיפול"}
+                            {selectedService ? `${selectedService.name} (${selectedService.price} ₪)` : "בחר..."}
                         </Text>
                     </View>
                 </TouchableOpacity>
 
-                {/* STEP 3 */}
+                {/* Step 3: Date */}
                 <TouchableOpacity style={styles.stepRow} onPress={() => setShowDateModal(true)}>
-                    <View style={styles.stepNumberCircle}>
-                        <Text style={{ color: "#fff" }}>3</Text>
-                    </View>
+                    <View style={styles.stepNumberCircle}><Text style={styles.stepNumText}>3</Text></View>
                     <View>
-                        <Text style={styles.stepLabel}>יום</Text>
-                        <Text style={styles.stepValue}>{selectedDate ? formatDate(selectedDate) : "בחר יום"}</Text>
+                        <Text style={styles.stepLabel}>תאריך</Text>
+                        <Text style={styles.stepValue}>{selectedDate ? formatDate(selectedDate) : "בחר..."}</Text>
                     </View>
                 </TouchableOpacity>
 
-                {/* STEP 4 */}
+                {/* Step 4: Time */}
                 <TouchableOpacity
-                    style={styles.stepRow}
+                    style={[styles.stepRow, (!selectedDate || !selectedService) && { opacity: 0.5 }]}
                     onPress={() => setShowTimeModal(true)}
                     disabled={!selectedDate || !selectedService}
                 >
-                    <View style={styles.stepNumberCircle}>
-                        <Text style={{ color: "#fff" }}>4</Text>
-                    </View>
+                    <View style={styles.stepNumberCircle}><Text style={styles.stepNumText}>4</Text></View>
                     <View>
                         <Text style={styles.stepLabel}>שעה</Text>
-                        <Text style={styles.stepValue}>{selectedTime ? formatTime(selectedTime) : "בחר שעה"}</Text>
+                        <Text style={styles.stepValue}>{selectedTime ? formatTime(selectedTime) : "בחר..."}</Text>
                     </View>
                 </TouchableOpacity>
 
-                {/* SUBMIT BOX */}
+                {/* Action Buttons */}
                 <View style={styles.summaryBox}>
                     <TouchableOpacity
                         style={[styles.submitButton, (!selectedTime || submitting) && { opacity: 0.5 }]}
                         disabled={!selectedTime || submitting}
                         onPress={handleSubmit}
                     >
-                        {submitting ? (
-                            <ActivityIndicator color="#fff" />
-                        ) : (
-                            <Text style={styles.submitButtonText}>אישור וקביעת תור</Text>
-                        )}
+                        {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitButtonText}>אישור וקביעת תור</Text>}
                     </TouchableOpacity>
 
                     {bookingSuccess && (
                         <TouchableOpacity style={styles.secondaryButton} onPress={() => router.push("/torList")}>
-                            <Text style={styles.secondaryButtonText}>לעמוד התורים שלי</Text>
+                            <Text style={styles.secondaryButtonText}>מעבר לתורים שלי</Text>
                         </TouchableOpacity>
                     )}
                 </View>
+
             </ScrollView>
 
-            {/* STAFF MODAL */}
-            <Modal
-                visible={showStaffModal}
-                transparent
-                animationType="slide"
-                onRequestClose={() => {
-                    setSelectedStaff(null);
-                    setShowStaffModal(false);
-                }}
-            >
+            {/* --- Modals --- */}
+
+            {/* 1. Staff Modal */}
+            <Modal visible={showStaffModal} transparent animationType="slide" onRequestClose={() => setShowStaffModal(false)}>
                 <View style={styles.modalBackdrop}>
-                    <View style={styles.modalCard2}>
+                    <View style={styles.modalCard}>
                         <Text style={styles.modalTitle}>בחר איש צוות</Text>
-                        {staffOptions.map((s) => (
-                            <TouchableOpacity
-                                key={s.id}
-                                style={styles.chip}
-                                onPress={() => {
-                                    setSelectedStaff(s);
-                                    setSelectedDate(null);
-                                    setSelectedTime(null);
-                                    setBlockedDatesMap({}); // כדי שלא יישארו "צביעות" מהעובד הקודם עד שהטעינה תסתיים
-                                    setShowStaffModal(false);
-                                    setCurrentStep(2);
-                                }}
-                            >
-                                <Text>{s.name}</Text>
+                        {staffOptions.map(s => (
+                            <TouchableOpacity key={s.id} style={styles.chip} onPress={() => {
+                                setSelectedStaff(s);
+                                setSelectedDate(null);
+                                setSelectedTime(null);
+                                setBlockedDatesMap({});
+                                setShowStaffModal(false);
+                                setCurrentStep(2);
+                            }}>
+                                <Text style={styles.chipText}>{s.name}</Text>
                             </TouchableOpacity>
                         ))}
                     </View>
                 </View>
             </Modal>
 
-            {/* SERVICE MODAL */}
-            <Modal
-                visible={showServiceModal}
-                transparent
-                animationType="slide"
-                onRequestClose={() => {
-                    setSelectedService(null);
-                    setShowServiceModal(false);
-                }}
-            >
+            {/* 2. Service Modal */}
+            <Modal visible={showServiceModal} transparent animationType="slide" onRequestClose={() => setShowServiceModal(false)}>
                 <View style={styles.modalBackdrop}>
-                    <View style={styles.modalCard2}>
+                    <View style={styles.modalCard}>
                         <Text style={styles.modalTitle}>בחר טיפול</Text>
-                        {services.map((srv) => (
-                            <TouchableOpacity
-                                key={srv.id}
-                                style={styles.chip}
-                                onPress={() => {
-                                    setSelectedService(srv);
-                                    setSelectedDate(null);
-                                    setSelectedTime(null);
-                                    setShowServiceModal(false);
-                                    setCurrentStep(3);
-                                }}
-                            >
+                        {services.map(s => (
+                            <TouchableOpacity key={s.id} style={styles.chip} onPress={() => {
+                                setSelectedService(s);
+                                setSelectedDate(null);
+                                setSelectedTime(null);
+                                setShowServiceModal(false);
+                                setCurrentStep(3);
+                            }}>
                                 <View style={styles.chipRow}>
-                                    <Text style={styles.chipText}>{srv.name}</Text>
-                                    <Text style={styles.chipPrice}>{srv.price} ₪</Text>
+                                    <Text style={styles.chipText}>{s.name}</Text>
+                                    <Text style={styles.chipPrice}>{s.price} ₪</Text>
                                 </View>
                             </TouchableOpacity>
                         ))}
@@ -794,36 +650,26 @@ const BookAppointmentScreen = () => {
                 </View>
             </Modal>
 
-            {/* DATE MODAL */}
-            <Modal
-                visible={showDateModal}
-                transparent
-                animationType="slide"
-                onRequestClose={() => {
-                    setSelectedDate(null);
-                    setShowDateModal(false);
-                }}
-            >
+            {/* 3. Date Modal (Calendar) */}
+            <Modal visible={showDateModal} transparent animationType="slide" onRequestClose={() => setShowDateModal(false)}>
                 <View style={styles.modalBackdrop}>
-                    <View style={[styles.modalCard, { height: "80%" }]}>
-                        <Text style={styles.modalTitle}>בחירת יום</Text>
-
+                    <View style={[styles.modalCard, { height: '85%' }]}>
+                        <Text style={styles.modalTitle}>בחירת תאריך</Text>
                         <CalendarList
                             minDate={dateToYMD(new Date())}
                             futureScrollRange={6}
-                            dayComponent={(props: any) => (
+                            dayComponent={(props) => (
                                 <DayCell
-                                    date={props?.date as DateData | undefined}
-                                    state={props?.state as string | undefined}
-                                    business={business}
+                                    date={props.date}
+                                    state={props.state}
+                                    openingHours={openingHours}
                                     blockedDatesMap={blockedDatesMap}
                                     selectedDate={selectedDate}
                                     onPickDate={(dateString) => {
-                                        const chosen = new Date(dateString);
-                                        setSelectedDate(chosen);
+                                        setSelectedDate(new Date(dateString));
                                         setSelectedTime(null);
                                         setShowDateModal(false);
-                                        setCurrentStep(4);
+                                        setShowTimeModal(true); // Auto advance
                                     }}
                                 />
                             )}
@@ -832,275 +678,218 @@ const BookAppointmentScreen = () => {
                 </View>
             </Modal>
 
-            {/* TIME MODAL */}
-            <Modal
-                visible={showTimeModal}
-                transparent
-                animationType="slide"
-                onRequestClose={() => {
-                    setSelectedTime(null);
-                    setShowTimeModal(false);
-                }}
-            >
+            {/* 4. Time Modal */}
+            <Modal visible={showTimeModal} transparent animationType="slide" onRequestClose={() => setShowTimeModal(false)}>
                 <View style={styles.modalBackdrop}>
-                    <View style={styles.modalCard}>
-                        <Text style={styles.modalTitle}>בחר שעה</Text>
-
-                        {loadingDayAppointments || loadingDayBlocks ? (
-                            <ActivityIndicator />
+                    <View style={[styles.modalCard, { maxHeight: '80%' }]}>
+                        <Text style={styles.modalTitle}>בחירת שעה</Text>
+                        {loadingSlots ? (
+                            <ActivityIndicator size="large" color="#000" />
                         ) : availableSlots.length === 0 ? (
-                            <>
-                                <Text style={styles.emptyText}>
-                                    אין שעות פנויות ביום זה. ייתכן שכל היום תפוס, שהעסק סגור, או שקיימת חסימה (חופשה / יום מיוחד), או שהשעות עברו.
-                                </Text>
-                                <TouchableOpacity
-                                    style={styles.backButton}
-                                    onPress={() => {
-                                        setShowTimeModal(false);
-                                        setShowDateModal(true);
-                                    }}
-                                >
-                                    <Text style={styles.backButtonText}>חזרה לבחירת יום</Text>
+                            <View style={{ alignItems: 'center', padding: 20 }}>
+                                <Text style={styles.emptyText}>אין שעות פנויות בתאריך זה.</Text>
+                                <TouchableOpacity onPress={() => { setShowTimeModal(false); setShowDateModal(true); }} style={styles.backButton}>
+                                    <Text style={styles.backButtonText}>חזרה ליומן</Text>
                                 </TouchableOpacity>
-                            </>
+                            </View>
                         ) : (
                             <ScrollView>
-                                {availableSlots.map((slot) => (
-                                    <TouchableOpacity
-                                        key={slot.toISOString()}
-                                        style={styles.slotButton}
-                                        onPress={() => {
-                                            setSelectedTime(slot);
-                                            setShowTimeModal(false);
-                                            setCurrentStep(5);
-                                        }}
-                                    >
-                                        <Text style={styles.slotText}>{formatTime(slot)}</Text>
-                                    </TouchableOpacity>
-                                ))}
+                                <View style={styles.slotsGrid}>
+                                    {availableSlots.map(slot => (
+                                        <TouchableOpacity
+                                            key={slot.toISOString()}
+                                            style={styles.slotButton}
+                                            onPress={() => {
+                                                setSelectedTime(slot);
+                                                setShowTimeModal(false);
+                                            }}
+                                        >
+                                            <Text style={styles.slotText}>{formatTime(slot)}</Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
                             </ScrollView>
                         )}
                     </View>
                 </View>
             </Modal>
+
         </View>
     );
-};
+}
 
-// -----------------------------------------------------------
-// STYLES
-// -----------------------------------------------------------
+// ----------------------------------------------------------------------
+// Styles
+// ----------------------------------------------------------------------
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: "#f3f4f6",
+        backgroundColor: "#f9fafb",
         paddingHorizontal: 16,
         paddingTop: 24,
     },
     title: {
-        fontSize: 20,
+        fontSize: 22,
         fontWeight: "700",
         textAlign: "center",
-        marginBottom: 12,
-    },
-
-    // Opening hours card
-    openingBox: {
-        backgroundColor: "#ffffff",
-        borderRadius: 20,
-        padding: 12,
         marginBottom: 16,
+        color: "#111827",
+    },
+    openingBox: {
+        backgroundColor: "#fff",
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 20,
         elevation: 2,
+        shadowColor: "#000",
+        shadowOpacity: 0.05,
+        shadowRadius: 5,
+        shadowOffset: { width: 0, height: 2 },
     },
     openingTitle: {
-        fontSize: 14,
-        fontWeight: "700",
-        marginBottom: 6,
+        fontSize: 16,
+        fontWeight: "bold",
+        marginBottom: 8,
         textAlign: "center",
     },
     openingRow: {
         flexDirection: "row",
         justifyContent: "space-between",
-        paddingVertical: 2,
+        marginVertical: 2,
     },
-    openingDay: {
-        fontSize: 13,
-        color: "#4b5563",
-    },
-    openingTime: {
-        fontSize: 13,
-        fontWeight: "500",
-        color: "#111827",
-    },
+    openingDay: { fontSize: 14, color: "#4b5563" },
+    openingTime: { fontSize: 14, fontWeight: "500", color: "#111" },
     openingNote: {
-        fontSize: 11,
-        color: "#6b7280",
+        fontSize: 12,
+        color: "#ef4444",
         marginTop: 8,
         textAlign: "center",
     },
-
     stepRow: {
         flexDirection: "row",
+        alignItems: "center",
         backgroundColor: "#fff",
-        borderRadius: 24,
+        borderRadius: 16,
         padding: 16,
         marginBottom: 12,
-        alignItems: "center",
-        elevation: 3,
+        elevation: 2,
+        shadowColor: "#000",
+        shadowOpacity: 0.05,
+        shadowRadius: 5,
+        shadowOffset: { width: 0, height: 2 },
     },
     stepNumberCircle: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
-        backgroundColor: "#1d4ed8",
-        justifyContent: "center",
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: "#2563eb",
         alignItems: "center",
+        justifyContent: "center",
         marginRight: 12,
     },
+    stepNumText: { color: "#fff", fontWeight: "bold" },
     stepLabel: { fontSize: 12, color: "#6b7280" },
-    stepValue: { fontSize: 16, fontWeight: "600" },
+    stepValue: { fontSize: 16, fontWeight: "600", color: "#111827", textAlign: "left" },
 
     summaryBox: {
+        marginTop: 20,
         backgroundColor: "#fff",
-        borderRadius: 24,
-        padding: 16,
-        marginTop: 24,
-    },
-
-    submitButton: {
-        backgroundColor: "#000",
-        paddingVertical: 12,
-        borderRadius: 24,
+        borderRadius: 16,
+        padding: 20,
         alignItems: "center",
     },
-    submitButtonText: {
-        color: "#fff",
-        fontWeight: "700",
+    submitButton: {
+        backgroundColor: "#111827",
+        paddingVertical: 14,
+        paddingHorizontal: 32,
+        borderRadius: 99,
+        width: "100%",
+        alignItems: "center",
     },
+    submitButtonText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+
     secondaryButton: {
         marginTop: 12,
         paddingVertical: 12,
-        borderRadius: 24,
-        borderWidth: 1,
-        borderColor: "#1d4ed8",
+        width: "100%",
         alignItems: "center",
+        borderWidth: 1,
+        borderColor: "#2563eb",
+        borderRadius: 99,
     },
-    secondaryButtonText: {
-        color: "#1d4ed8",
-        fontWeight: "600",
-    },
+    secondaryButtonText: { color: "#2563eb", fontWeight: "600" },
 
+    // Modal Styles
     modalBackdrop: {
         flex: 1,
+        backgroundColor: "rgba(0,0,0,0.4)",
         justifyContent: "flex-end",
-        backgroundColor: "rgba(0,0,0,0.25)",
     },
     modalCard: {
         backgroundColor: "#fff",
-        padding: 20,
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
-        maxHeight: "80%",
-    },
-    modalCard2: {
-        backgroundColor: "#fff",
-        padding: 20,
-        paddingBottom: 50,
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
+        padding: 24,
         maxHeight: "80%",
     },
     modalTitle: {
-        fontSize: 18,
-        fontWeight: "700",
-        marginBottom: 16,
+        fontSize: 20,
+        fontWeight: "bold",
         textAlign: "center",
+        marginBottom: 20,
     },
-
     chip: {
-        padding: 14,
         backgroundColor: "#f3f4f6",
-        borderRadius: 16,
-        marginBottom: 10,
+        padding: 16,
+        borderRadius: 12,
+        marginBottom: 12,
     },
     chipRow: {
         flexDirection: "row",
         justifyContent: "space-between",
-        alignItems: "center",
     },
-    chipText: {
-        fontSize: 14,
-        color: "#111827",
-    },
-    chipPrice: {
-        fontSize: 14,
-        fontWeight: "600",
-        color: "#111827",
-    },
+    chipText: { fontSize: 16, color: "#111" },
+    chipPrice: { fontSize: 16, fontWeight: "bold", color: "#2563eb" },
 
-    emptyText: {
-        textAlign: "center",
-        color: "#6b7280",
-        marginTop: 16,
-        marginBottom: 12,
+    slotsGrid: {
+        flexDirection: "row",
+        flexWrap: "wrap",
+        justifyContent: "space-between",
     },
-
-    backButton: {
-        alignSelf: "center",
-        marginTop: 4,
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: "#1d4ed8",
-        backgroundColor: "#eef2ff",
-    },
-    backButtonText: {
-        color: "#1d4ed8",
-        fontWeight: "600",
-        fontSize: 13,
-    },
-
     slotButton: {
+        width: "30%",
+        backgroundColor: "#eff6ff",
         paddingVertical: 12,
-        backgroundColor: "#f3f4f6",
-        borderRadius: 16,
+        borderRadius: 12,
         marginBottom: 12,
+        alignItems: "center",
+        borderWidth: 1,
+        borderColor: "#bfdbfe",
     },
-    slotText: { textAlign: "center", fontSize: 16 },
+    slotText: { color: "#1e40af", fontWeight: "600" },
 
-    // day component styles
+    emptyText: { textAlign: "center", fontSize: 16, color: "#6b7280", marginBottom: 20 },
+    backButton: {
+        paddingVertical: 10,
+        paddingHorizontal: 20,
+        backgroundColor: "#e5e7eb",
+        borderRadius: 99,
+    },
+    backButtonText: { color: "#374151", fontWeight: "600" },
+
+    // Day Cell
     dayContainer: {
         width: 32,
         height: 32,
-        borderRadius: 16,
         alignItems: "center",
         justifyContent: "center",
-        alignSelf: "center",
-        marginVertical: 2,
+        borderRadius: 16,
     },
-    dayContainerSelected: {
-        backgroundColor: "#1d4ed8",
-    },
-    dayContainerBlocked: {
-        backgroundColor: "#fee2e2",
-    },
-    dayText: {
-        fontSize: 14,
-        color: "#111827",
-    },
-    dayTextClosed: {
-        color: "#d1d5db",
-    },
-    dayTextToday: {
-        fontWeight: "700",
-        textDecorationLine: "underline",
-    },
-    dayTextSelected: {
-        color: "#ffffff",
-        fontWeight: "700",
-    },
+    dayContainerBlocked: { backgroundColor: "#fee2e2" }, // אדום בהיר
+    dayContainerSelected: { backgroundColor: "#2563eb" }, // כחול
+    dayText: { fontSize: 14, color: "#111" },
+    dayTextClosed: { color: "#d1d5db" }, // אפור
+    dayTextToday: { fontWeight: "bold", textDecorationLine: "underline" },
+    dayTextSelected: { color: "#fff", fontWeight: "bold" },
 });
-
-export default BookAppointmentScreen;

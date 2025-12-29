@@ -1,7 +1,4 @@
 // app/admin/settings/TextsSettingsSection.tsx
-import { useAuth } from "@/contexts/AuthContext";
-import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
-import { URL } from "@/services/api";
 import React, { useEffect, useState } from "react";
 import {
     ActivityIndicator,
@@ -13,160 +10,97 @@ import {
     View,
 } from "react-native";
 
+import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
+import { apiPatch } from "@/services/api";
+
+// ----------------------------------------------------------------------
+// Types
+// ----------------------------------------------------------------------
+
+type TextFieldType = "address" | "message" | "about";
+
+// ----------------------------------------------------------------------
+// Component
+// ----------------------------------------------------------------------
+
 export default function TextsSettingsSection() {
     const { businessData, colors, refetch } = useBusinessDataContext();
-    const { userToken } = useAuth();
 
     const business = (businessData || {}) as any;
     const businessId = business?._id;
 
     const colorsSafe = {
         primary: colors?.primary ?? "#1d4ed8",
-        secondary: colors?.secondary ?? "#f3f4f6",
-        third: colors?.third ?? "#0b1120",
     };
 
-    const [address, setAddress] = useState<string>(business.address || "");
-    const [message, setMessage] = useState<string>(business.message || "");
-    const [aboutUs, setAboutUs] = useState<string>(business.aboutUs || "");
+    // State
+    const [address, setAddress] = useState<string>("");
+    const [message, setMessage] = useState<string>("");
+    const [aboutUs, setAboutUs] = useState<string>("");
 
-    const [savingAddress, setSavingAddress] = useState(false);
-    const [savingMessage, setSavingMessage] = useState(false);
-    const [savingAbout, setSavingAbout] = useState(false);
+    const [loadingState, setLoadingState] = useState<Record<TextFieldType, boolean>>({
+        address: false,
+        message: false,
+        about: false,
+    });
 
+    // Sync state with businessData
     useEffect(() => {
         setAddress(business.address || "");
         setMessage(business.message || "");
         setAboutUs(business.aboutUs || "");
     }, [business.address, business.message, business.aboutUs]);
 
-    if (!businessId) {
-        return null;
-    }
+    if (!businessId) return null;
 
-    const handleSaveAddress = async () => {
-        try {
-            setSavingAddress(true);
+    // --- Generic Handler ---
 
-            const res = await fetch(
-                `${URL}/businesses/${businessId}/address`,
-                {
-                    method: "PATCH",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "x-api-key": userToken || "",
-                    },
-                    body: JSON.stringify({ address }),
-                }
-            );
+    const handleSave = async (field: TextFieldType, value: string) => {
+        // מיפוי שמות השדות ל-Endpoint בשרת
+        // הערה: ה-API הנוכחי משתמש בנתיבים שונים לכל שדה:
+        // /address, /message, /about
+        // וגוף הבקשה שונה: {address}, {message}, {aboutUs}
 
-            const rawText = await res.text();
-            console.log(
-                "📥 save address response:",
-                res.status,
-                rawText.substring(0, 500)
-            );
+        let endpoint = "";
+        let body = {};
 
-            if (!res.ok) {
-                console.log("save address error:", rawText);
-                Alert.alert("שגיאה", "לא ניתן לשמור כתובת כרגע.");
-                return;
-            }
-
-            await refetch();
-            Alert.alert("הצלחה", "הכתובת נשמרה.");
-        } catch (err) {
-            console.log("save address error (exception):", err);
-            Alert.alert("שגיאה", "אירעה תקלה בשמירת הכתובת.");
-        } finally {
-            setSavingAddress(false);
+        switch (field) {
+            case "address":
+                endpoint = `/businesses/${businessId}/address`;
+                body = { address: value };
+                break;
+            case "message":
+                endpoint = `/businesses/${businessId}/message`;
+                body = { message: value };
+                break;
+            case "about":
+                endpoint = `/businesses/${businessId}/about`;
+                body = { aboutUs: value };
+                break;
         }
-    };
 
-    const handleSaveMessage = async () => {
         try {
-            setSavingMessage(true);
+            setLoadingState(prev => ({ ...prev, [field]: true }));
 
-            const res = await fetch(
-                `${URL}/businesses/${businessId}/message`,
-                {
-                    method: "PATCH",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "x-api-key": userToken || "",
-                    },
-                    body: JSON.stringify({ message }),
-                }
-            );
+            const res = await apiPatch(endpoint, body);
 
-            const rawText = await res.text();
-            console.log(
-                "📥 save message response:",
-                res.status,
-                rawText.substring(0, 500)
-            );
-
-            if (!res.ok) {
-                console.log("save message error:", rawText);
-                Alert.alert("שגיאה", "לא ניתן לשמור הודעה כרגע.");
-                return;
+            if (res) {
+                await refetch();
+                Alert.alert("הצלחה", "השינויים נשמרו בהצלחה.");
+            } else {
+                Alert.alert("שגיאה", "לא ניתן לשמור את השינויים.");
             }
-
-            await refetch();
-            Alert.alert("הצלחה", "ההודעה נשמרה.");
         } catch (err) {
-            console.log("save message error (exception):", err);
-            Alert.alert("שגיאה", "אירעה תקלה בשמירת ההודעה.");
+            console.error(`Save ${field} error:`, err);
+            Alert.alert("שגיאה", "אירעה תקלה בשמירה.");
         } finally {
-            setSavingMessage(false);
-        }
-    };
-
-    const handleSaveAbout = async () => {
-        try {
-            setSavingAbout(true);
-
-            const res = await fetch(
-                `${URL}/businesses/${businessId}/about`,
-                {
-                    method: "PATCH",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "x-api-key": userToken || "",
-                    },
-                    body: JSON.stringify({ aboutUs }),
-                }
-            );
-
-            const rawText = await res.text();
-            console.log(
-                "📥 save about response:",
-                res.status,
-                rawText.substring(0, 500)
-            );
-
-            if (!res.ok) {
-                console.log("save about error:", rawText);
-                Alert.alert(
-                    "שגיאה",
-                    "לא ניתן לשמור טקסט 'עלינו' כרגע."
-                );
-                return;
-            }
-
-            await refetch();
-            Alert.alert("הצלחה", "טקסט 'עלינו' נשמר.");
-        } catch (err) {
-            console.log("save about error (exception):", err);
-            Alert.alert("שגיאה", "אירעה תקלה בשמירת הטקסט.");
-        } finally {
-            setSavingAbout(false);
+            setLoadingState(prev => ({ ...prev, [field]: false }));
         }
     };
 
     return (
         <View style={{ gap: 16 }}>
-            {/* כתובת העסק */}
+            {/* --- Address --- */}
             <View style={styles.card}>
                 <Text style={styles.cardTitle}>כתובת העסק</Text>
                 <Text style={styles.cardSubtitle}>
@@ -181,24 +115,19 @@ export default function TextsSettingsSection() {
                 />
 
                 <TouchableOpacity
-                    style={[
-                        styles.actionButton,
-                        { backgroundColor: colorsSafe.primary, marginTop: 8 },
-                    ]}
-                    onPress={handleSaveAddress}
-                    disabled={savingAddress}
+                    style={[styles.actionButton, { backgroundColor: colorsSafe.primary }]}
+                    onPress={() => handleSave("address", address)}
+                    disabled={loadingState.address}
                 >
-                    {savingAddress ? (
+                    {loadingState.address ? (
                         <ActivityIndicator color="#fff" />
                     ) : (
-                        <Text style={styles.actionButtonText}>
-                            שמירת כתובת
-                        </Text>
+                        <Text style={styles.actionButtonText}>שמירת כתובת</Text>
                     )}
                 </TouchableOpacity>
             </View>
 
-            {/* הודעה קופצת */}
+            {/* --- Popup Message --- */}
             <View style={styles.card}>
                 <Text style={styles.cardTitle}>הודעה קופצת ללקוח</Text>
                 <Text style={styles.cardSubtitle}>
@@ -214,24 +143,19 @@ export default function TextsSettingsSection() {
                 />
 
                 <TouchableOpacity
-                    style={[
-                        styles.actionButton,
-                        { backgroundColor: colorsSafe.primary, marginTop: 8 },
-                    ]}
-                    onPress={handleSaveMessage}
-                    disabled={savingMessage}
+                    style={[styles.actionButton, { backgroundColor: colorsSafe.primary }]}
+                    onPress={() => handleSave("message", message)}
+                    disabled={loadingState.message}
                 >
-                    {savingMessage ? (
+                    {loadingState.message ? (
                         <ActivityIndicator color="#fff" />
                     ) : (
-                        <Text style={styles.actionButtonText}>
-                            שמירת הודעה
-                        </Text>
+                        <Text style={styles.actionButtonText}>שמירת הודעה</Text>
                     )}
                 </TouchableOpacity>
             </View>
 
-            {/* עלינו */}
+            {/* --- About Us --- */}
             <View style={styles.card}>
                 <Text style={styles.cardTitle}>קצת עלינו</Text>
                 <Text style={styles.cardSubtitle}>
@@ -247,19 +171,14 @@ export default function TextsSettingsSection() {
                 />
 
                 <TouchableOpacity
-                    style={[
-                        styles.actionButton,
-                        { backgroundColor: colorsSafe.primary, marginTop: 8 },
-                    ]}
-                    onPress={handleSaveAbout}
-                    disabled={savingAbout}
+                    style={[styles.actionButton, { backgroundColor: colorsSafe.primary }]}
+                    onPress={() => handleSave("about", aboutUs)}
+                    disabled={loadingState.about}
                 >
-                    {savingAbout ? (
+                    {loadingState.about ? (
                         <ActivityIndicator color="#fff" />
                     ) : (
-                        <Text style={styles.actionButtonText}>
-                            שמירת טקסט
-                        </Text>
+                        <Text style={styles.actionButtonText}>שמירת טקסט</Text>
                     )}
                 </TouchableOpacity>
             </View>
@@ -277,38 +196,43 @@ const styles = StyleSheet.create({
         shadowRadius: 10,
         shadowOffset: { width: 0, height: 4 },
         elevation: 3,
-        gap: 8,
+        gap: 12,
     },
     cardTitle: {
         fontSize: 18,
         fontWeight: "600",
         marginBottom: 4,
+        textAlign: "right",
     },
     cardSubtitle: {
         fontSize: 13,
         color: "#6b7280",
+        textAlign: "right",
     },
     input: {
         borderWidth: 1,
         borderColor: "#e5e7eb",
         borderRadius: 10,
-        paddingHorizontal: 10,
-        paddingVertical: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
         fontSize: 14,
         backgroundColor: "#f9fafb",
-        textAlign: "right",
+        textAlign: "right", // עברית
     },
     textArea: {
         minHeight: 80,
+        textAlignVertical: "top", // חשוב ל-multiline
     },
     textAreaLarge: {
         minHeight: 140,
+        textAlignVertical: "top", // חשוב ל-multiline
     },
     actionButton: {
-        paddingVertical: 10,
+        paddingVertical: 12,
         borderRadius: 999,
         alignItems: "center",
         justifyContent: "center",
+        marginTop: 8,
     },
     actionButtonText: {
         color: "#ffffff",

@@ -1,17 +1,23 @@
+// app/(user)/torList.tsx
 import { useAuth } from "@/contexts/AuthContext";
 import { useBusinessDataContext } from "@/contexts/BusinessDataContext";
-import { URL, apiFetch } from "@/services/api";
-import React, { useEffect, useMemo, useState } from "react";
+import { apiFetch } from "@/services/api";
+import React, { useCallback, useEffect, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
     Linking,
+    RefreshControl,
     ScrollView,
     StyleSheet,
     Text,
     TouchableOpacity,
     View,
 } from "react-native";
+
+// ----------------------------------------------------------------------
+// Types
+// ----------------------------------------------------------------------
 
 interface BusinessRefFromAppt {
     _id: string;
@@ -34,10 +40,44 @@ interface Appointment {
         fullName?: string;
     };
     business: BusinessRefFromAppt;
-    status: string;
+    status: "confirmed" | "completed" | "canceled" | "no_show";
 }
 
 const HOURS_24_MS = 24 * 60 * 60 * 1000;
+
+// ----------------------------------------------------------------------
+// Helpers
+// ----------------------------------------------------------------------
+
+const formatApptRange = (iso: string, durationMin: number) => {
+    const start = new Date(iso);
+    const end = new Date(start.getTime() + durationMin * 60000);
+
+    const datePart = start.toLocaleDateString("he-IL", {
+        weekday: "long",
+        day: "2-digit",
+        month: "2-digit",
+        year: "2-digit",
+    });
+
+    const startTime = start.toLocaleTimeString("he-IL", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    });
+
+    const endTime = end.toLocaleTimeString("he-IL", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    });
+
+    return `${datePart}  |  ${startTime} - ${endTime}`;
+};
+
+// ----------------------------------------------------------------------
+// Component
+// ----------------------------------------------------------------------
 
 export default function TorList() {
     const { userToken } = useAuth();
@@ -45,99 +85,58 @@ export default function TorList() {
 
     const [appointments, setAppointments] = useState<Appointment[]>([]);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [cancelingId, setCancelingId] = useState<string | null>(null);
 
-    const fetchAppointments = async () => {
+    // נתונים מה-Context (עם Fallback במידת הצורך)
+    const business: any = businessData || {};
+
+    /**
+     * טעינת תורים מהשרת
+     */
+    const fetchAppointments = useCallback(async () => {
         try {
-            const res = await apiFetch(
-                `${URL}/appointments/my?statuses=confirmed,completed&includePast=false`,
-                { method: "GET" }
-            );
+            const res = await apiFetch("/appointments/my?statuses=confirmed,completed&includePast=false");
 
             if (!res.ok) {
-                console.log("❌ Failed GET /appointments/my");
                 setAppointments([]);
                 return;
             }
 
             const data = await res.json();
-            setAppointments(data || []);
-        } catch (err) {
-            console.error("❌ Error fetching appointments:", err);
-        } finally {
-            setLoading(false);
-        }
-    };
+            // מיון: תאריך קרוב קודם
+            const sorted = (data || []).sort((a: Appointment, b: Appointment) =>
+                new Date(a.start).getTime() - new Date(b.start).getTime()
+            );
 
+            setAppointments(sorted);
+        } catch (err) {
+            console.error("Error fetching appointments:", err);
+        }
+    }, []);
+
+    // טעינה ראשונית
     useEffect(() => {
         if (!userToken) return;
-        fetchAppointments();
-    }, [userToken]);
 
-    // --- מידע על העסק (שם + כתובת + טלפון) ---
-    const businessName = useMemo(() => {
-        return (businessData as any)?.name || appointments[0]?.business?.name || "העסק";
-    }, [businessData, appointments]);
+        setLoading(true);
+        fetchAppointments().finally(() => setLoading(false));
+    }, [userToken, fetchAppointments]);
 
-    const businessAddress = useMemo(() => {
-        return (
-            (businessData as any)?.address ||
-            appointments[0]?.business?.address ||
-            undefined
-        );
-    }, [businessData, appointments]);
-
-    const businessPhone = useMemo(() => {
-        return (
-            (businessData as any)?.phone ||
-            appointments[0]?.business?.phone ||
-            undefined
-        );
-    }, [businessData, appointments]);
-
-    const openWaze = () => {
-        if (!businessAddress) {
-            Alert.alert("שגיאה", "לא נמצאה כתובת לעסק");
-            return;
-        }
-        const encoded = encodeURIComponent(businessAddress);
-        const url = `https://waze.com/ul?q=${encoded}&navigate=yes`;
-        Linking.openURL(url).catch(() =>
-            Alert.alert("שגיאה", "שגיאה בפתיחת Waze")
-        );
+    // רענון ידני (Pull to Refresh)
+    const onRefresh = async () => {
+        setRefreshing(true);
+        await fetchAppointments();
+        setRefreshing(false);
     };
 
-    // תצוגת טווח שעות
-    const formatApptRange = (iso: string, durationMin: number) => {
-        const start = new Date(iso);
-        const end = new Date(start.getTime() + durationMin * 60000);
-
-        const datePart = start.toLocaleDateString("he-IL", {
-            weekday: "long",
-            day: "2-digit",
-            month: "2-digit",
-            year: "2-digit",
-        });
-
-        const startTime = start.toLocaleTimeString("he-IL", {
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false,
-        });
-
-        const endTime = end.toLocaleTimeString("he-IL", {
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false,
-        });
-
-        return `${datePart}   ${startTime}-${endTime}`;
-    };
-
+    /**
+     * ביטול תור
+     */
     const handleCancel = async (id: string) => {
         setCancelingId(id);
         try {
-            const res = await apiFetch(`${URL}/appointments/${id}/cancel`, {
+            const res = await apiFetch(`/appointments/${id}/cancel`, {
                 method: "PATCH",
             });
 
@@ -147,26 +146,21 @@ export default function TorList() {
                 return;
             }
 
-            const txt = await res.text();
+            // פענוח שגיאה מהשרת
+            const json = await res.json().catch(() => ({}));
             let msg = "לא ניתן לבטל את התור.";
 
-            try {
-                const json = JSON.parse(txt);
-                if (json.error === "CANNOT_CANCEL_WITHIN_24H") {
-                    msg = "לא ניתן לבטל תור שפחות מ־24 שעות למועדו.";
-                } else if (json.error === "ONLY_CONFIRMED_CAN_BE_CANCELED") {
-                    msg = "ניתן לבטל רק תורים במצב מאושר.";
-                } else if (json.error) {
-                    msg = json.error;
-                }
-            } catch {
-                if (txt) msg = txt;
+            if (json.error === "CANNOT_CANCEL_WITHIN_24H") {
+                msg = "לא ניתן לבטל תור שפחות מ־24 שעות למועדו.";
+            } else if (json.error === "ONLY_CONFIRMED_CAN_BE_CANCELED") {
+                msg = "ניתן לבטל רק תורים במצב מאושר.";
+            } else if (json.message || json.error) {
+                msg = json.message || json.error;
             }
 
-            Alert.alert("שגיאה", msg);
+            Alert.alert("שגיאה בביטול", msg);
         } catch (err) {
-            console.error("❌ Error canceling appointment:", err);
-            Alert.alert("שגיאה", "תקלה בביטול התור, נסה שוב מאוחר יותר.");
+            Alert.alert("שגיאה", "תקלה בתקשורת עם השרת.");
         } finally {
             setCancelingId(null);
         }
@@ -177,99 +171,125 @@ export default function TorList() {
             "ביטול תור",
             "האם אתה בטוח שברצונך לבטל את התור?",
             [
+                { text: "לא", style: "cancel" },
                 {
-                    text: "לא",
-                    style: "cancel",
-                },
-                {
-                    text: "כן, בטל",
+                    text: "כן, בטל תור",
                     style: "destructive",
-                    onPress: () => handleCancel(id),
+                    onPress: () => handleCancel(id)
                 },
             ]
         );
     };
+
+    // --- Derived Business Info ---
+
+    // שימוש במידע מה-Context אם קיים, אחרת מנסים לקחת מהתור הראשון (למקרה של אפליקציה מרובת עסקים בעתיד)
+    const displayBusinessName = business.name || appointments[0]?.business?.name || "העסק";
+    const displayAddress = business.address || appointments[0]?.business?.address;
+    const displayPhone = business.phone || appointments[0]?.business?.phone;
+
+    const openWaze = () => {
+        if (!displayAddress) {
+            Alert.alert("שגיאה", "לא קיימת כתובת לעסק זה.");
+            return;
+        }
+        const encoded = encodeURIComponent(displayAddress);
+        Linking.openURL(`https://waze.com/ul?q=${encoded}&navigate=yes`)
+            .catch(() => Alert.alert("שגיאה", "לא ניתן לפתוח את Waze"));
+    };
+
 
     return (
         <View style={styles.container}>
             <Text style={styles.title}>התורים שלך</Text>
 
             <Text style={styles.infoText}>
-                ניתן לבטל תור עד{" "}
-                <Text style={{ fontWeight: "700" }}>24 שעות</Text> לפני מועד התור.
+                ניתן לבטל תור עד <Text style={{ fontWeight: "700" }}>24 שעות</Text> לפני מועד התור.
             </Text>
 
-            {/* כרטיס העסק */}
+            {/* Business Info Card */}
             <View style={styles.businessCard}>
-                <Text style={styles.businessName}>{businessName}</Text>
+                <Text style={styles.businessName}>{displayBusinessName}</Text>
 
                 <Text style={styles.businessAddress}>
-                    {businessAddress ? `כתובת: ${businessAddress}` : "כתובת לא זמינה"}
+                    {displayAddress ? `כתובת: ${displayAddress}` : "כתובת לא צוינה"}
                 </Text>
 
-                {businessPhone && (
-                    <Text style={styles.businessPhone}>
-                        טלפון: {businessPhone}
-                    </Text>
+                {displayPhone && (
+                    <Text style={styles.businessPhone}>טלפון: {displayPhone}</Text>
                 )}
 
-                {businessAddress && (
+                {displayAddress && (
                     <TouchableOpacity style={styles.wazeButton} onPress={openWaze}>
-                        <Text style={styles.wazeButtonText}>פתח ניווט ב־Waze</Text>
+                        <Text style={styles.wazeButtonText}>נווט עם Waze 🚗</Text>
                     </TouchableOpacity>
                 )}
             </View>
 
+            {/* Appointment List */}
             {loading ? (
-                <ActivityIndicator size="large" style={{ marginTop: 30 }} />
+                <ActivityIndicator size="large" style={{ marginTop: 30 }} color="#000" />
             ) : appointments.length === 0 ? (
-                <Text style={styles.emptyText}>אין לך תורים עתידיים כרגע 🙂</Text>
+                <ScrollView
+                    contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center' }}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+                >
+                    <Text style={styles.emptyText}>אין לך תורים עתידיים כרגע 🙂</Text>
+                </ScrollView>
             ) : (
-                <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+                <ScrollView
+                    contentContainerStyle={{ paddingBottom: 40 }}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+                >
                     {appointments.map((appt) => {
                         const startDate = new Date(appt.start);
                         const diffMs = startDate.getTime() - Date.now();
-                        const canCancel =
-                            appt.status === "confirmed" && diffMs > HOURS_24_MS;
+                        // האם ניתן לבטל? (סטטוס מאושר + יותר מ-24 שעות)
+                        const canCancel = appt.status === "confirmed" && diffMs > HOURS_24_MS;
+
+                        const workerName = appt.worker?.name || appt.worker?.fullName || "איש צוות";
 
                         return (
                             <View key={appt._id} style={styles.card}>
-                                {/* שורה עליונה בכרטיס: סטטוס + ביטול */}
-                                <View style={styles.cardHeaderRow}>
-                                    {canCancel && (
-                                        <TouchableOpacity
-                                            style={styles.cancelButton}
-                                            onPress={() => confirmCancel(appt._id)}
-                                            disabled={cancelingId === appt._id}
-                                        >
-                                            {cancelingId === appt._id ? (
-                                                <ActivityIndicator size="small" />
-                                            ) : (
-                                                <Text style={styles.cancelButtonText}>
-                                                    בטל תור
-                                                </Text>
-                                            )}
-                                        </TouchableOpacity>
-                                    )}
 
-                                    <Text style={styles.cardStatus}>
-                                        סטטוס:{" "}
-                                        {appt.status === "confirmed" ? "מאושר" : appt.status}
+                                {/* Header: Status + Cancel Button */}
+                                <View style={styles.cardHeaderRow}>
+                                    <View>
+                                        {canCancel ? (
+                                            <TouchableOpacity
+                                                style={styles.cancelButton}
+                                                onPress={() => confirmCancel(appt._id)}
+                                                disabled={cancelingId === appt._id}
+                                            >
+                                                {cancelingId === appt._id ? (
+                                                    <ActivityIndicator size="small" color="#b91c1c" />
+                                                ) : (
+                                                    <Text style={styles.cancelButtonText}>בטל תור</Text>
+                                                )}
+                                            </TouchableOpacity>
+                                        ) : (
+                                            <View style={{ width: 10 }} /> // Spacer if no button
+                                        )}
+                                    </View>
+
+                                    <Text style={[
+                                        styles.cardStatus,
+                                        appt.status === "confirmed" && { color: "green", fontWeight: "600" }
+                                    ]}>
+                                        {appt.status === "confirmed" ? "מאושר ✅" :
+                                            appt.status === "completed" ? "הושלם" : appt.status}
                                     </Text>
                                 </View>
 
+                                {/* Body: Details */}
                                 <Text style={styles.cardTitle}>{appt.service.name}</Text>
-
                                 <Text style={styles.cardSub}>
                                     {formatApptRange(appt.start, appt.service.duration)}
                                 </Text>
 
                                 {appt.worker && (
                                     <Text style={styles.cardWorker}>
-                                        אצל:{" "}
-                                        {appt.worker.name ||
-                                            appt.worker.fullName ||
-                                            "איש צוות"}
+                                        מטפל: {workerName}
                                     </Text>
                                 )}
                             </View>
@@ -288,57 +308,52 @@ const styles = StyleSheet.create({
         backgroundColor: "#f3f4f6",
     },
     title: {
-        fontSize: 22,
+        fontSize: 24,
         fontWeight: "700",
         textAlign: "center",
         marginBottom: 8,
+        color: "#111",
     },
     infoText: {
         fontSize: 13,
         color: "#4b5563",
-        textAlign: "right",
-        marginBottom: 12,
+        textAlign: "center",
+        marginBottom: 16,
     },
 
-    // --- עסק ---
+    // Business Card
     businessCard: {
         backgroundColor: "#ffffff",
         padding: 16,
         borderRadius: 16,
-        marginBottom: 16,
+        marginBottom: 20,
         shadowColor: "#000",
-        shadowOpacity: 0.04,
+        shadowOpacity: 0.05,
         shadowRadius: 6,
         elevation: 2,
-        alignItems: "flex-end",
+        alignItems: "center", // Center content for cleaner look
     },
     businessName: {
         fontSize: 18,
         fontWeight: "700",
         marginBottom: 4,
-        textAlign: "right",
-        width: "100%",
+        color: "#111",
     },
     businessAddress: {
         fontSize: 14,
-        color: "#374151",
-        marginBottom: 6,
-        textAlign: "right",
-        width: "100%",
+        color: "#4b5563",
+        marginBottom: 4,
     },
     businessPhone: {
         fontSize: 14,
-        color: "#374151",
-        marginBottom: 10,
-        textAlign: "right",
-        width: "100%",
+        color: "#4b5563",
+        marginBottom: 12,
     },
     wazeButton: {
         paddingVertical: 8,
-        paddingHorizontal: 16,
-        backgroundColor: "#2d7eff",
+        paddingHorizontal: 20,
+        backgroundColor: "#3b82f6", // Waze blue-ish
         borderRadius: 20,
-        alignSelf: "flex-end",
     },
     wazeButtonText: {
         color: "#fff",
@@ -346,11 +361,11 @@ const styles = StyleSheet.create({
         fontSize: 14,
     },
 
-    // --- רשימת תורים ---
+    // List
     emptyText: {
         textAlign: "center",
         color: "#6b7280",
-        marginTop: 30,
+        marginTop: 50,
         fontSize: 16,
     },
     card: {
@@ -362,55 +377,48 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.04,
         shadowRadius: 4,
         elevation: 1,
-        alignItems: "flex-end",
     },
-
     cardHeaderRow: {
         flexDirection: "row",
         justifyContent: "space-between",
         alignItems: "center",
-        width: "100%",
-        marginBottom: 10,
+        marginBottom: 12,
+        paddingBottom: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: "#f3f4f6",
     },
     cardStatus: {
-        fontSize: 13,
+        fontSize: 14,
         color: "#6b7280",
-        textAlign: "right",
     },
     cancelButton: {
         paddingVertical: 6,
-        paddingHorizontal: 14,
-        borderRadius: 999,
-        borderWidth: 1,
-        borderColor: "#fecaca",
-        backgroundColor: "#fef2f2",
+        paddingHorizontal: 12,
+        borderRadius: 8,
+        backgroundColor: "#fee2e2",
     },
     cancelButtonText: {
         color: "#b91c1c",
         fontWeight: "600",
-        fontSize: 13,
+        fontSize: 12,
     },
-
     cardTitle: {
-        fontSize: 16,
+        fontSize: 18,
         fontWeight: "700",
-        marginBottom: 6,
+        marginBottom: 4,
         textAlign: "right",
-        width: "100%",
+        color: "#111",
     },
     cardSub: {
         fontSize: 15,
         color: "#374151",
-        marginVertical: 6,
+        marginBottom: 8,
         textAlign: "right",
-        width: "100%",
-        lineHeight: 22,
     },
     cardWorker: {
         fontSize: 14,
-        color: "#1d4ed8",
-        marginBottom: 4,
+        color: "#2563eb",
         textAlign: "right",
-        width: "100%",
+        fontWeight: "500",
     },
 });
